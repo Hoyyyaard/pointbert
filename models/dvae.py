@@ -330,7 +330,7 @@ class DiscreteVAE(nn.Module):
 
 
     def forward(self, inp, temperature = 1., hard = False, **kwargs):
-        neighborhood, center = self.group_divider(inp)
+        neighborhood, center = self.group_divider(inp)   # B NPOINT 3
         logits = self.encoder(neighborhood)   #  B G C
         logits = self.dgcnn_1(logits, center) #  B G N
         soft_one_hot = F.gumbel_softmax(logits, tau = temperature, dim = 2, hard = hard) # B G N

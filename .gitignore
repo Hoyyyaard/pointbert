@@ -151,3 +151,12 @@ plot/
 pretrain_weight
 
 segmentation/log
+
+
+data
+ckpts
+vis
+.config
+.nv
+.vscode
+Pointnet2_PyTorch

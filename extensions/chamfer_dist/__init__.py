@@ -6,7 +6,8 @@
 # @Email:  cshzxie@gmail.com
 
 import torch
-
+import sys
+sys.path.append('/home/admin/Projects/Point-BERT/.local/lib/python3.7/site-packages/chamfer-2.0.0-py3.7-linux-x86_64.egg')
 import chamfer
 
 

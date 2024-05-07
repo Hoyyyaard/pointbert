@@ -45,7 +45,7 @@ model : {
     num_tokens: 8192,
     tokens_dims: 256, 
     decoder_dims: 256, 
-    ckpt: 'Need to be set' # set the dVAE weight here
+    ckpt: ckpts/dVAE.pth # set the dVAE weight here
   }}
 
 total_bs : 128
