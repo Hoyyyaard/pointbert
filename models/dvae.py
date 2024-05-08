@@ -330,6 +330,9 @@ class DiscreteVAE(nn.Module):
 
 
     def forward(self, inp, temperature = 1., hard = False, **kwargs):
+        if not kwargs.get('num_group') is None:
+            self.group_divider.num_group = kwargs['num_group']
+            self.group_divider.group_size = kwargs['group_size']
         neighborhood, center = self.group_divider(inp)   # B NPOINT 3
         logits = self.encoder(neighborhood)   #  B G C
         logits = self.dgcnn_1(logits, center) #  B G N
