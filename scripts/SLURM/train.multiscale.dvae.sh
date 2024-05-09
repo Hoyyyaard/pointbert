@@ -51,8 +51,8 @@ fi
 
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main.py \
-    --launcher pytorch --sync_bn \
+    --launcher slurm --sync_bn \
     --config cfgs/MultiScale_models/dvae.yaml \
     --exp_name multiscale_dvae \
-    --resume  
+    # --resume  
 

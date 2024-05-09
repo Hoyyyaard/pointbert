@@ -10,7 +10,7 @@ def get_args():
         help = 'yaml config file')
     parser.add_argument(
         '--launcher',
-        choices=['none', 'pytorch'],
+        choices=['none', 'pytorch', 'slurm'],
         default='none',
         help='job launcher')     
     parser.add_argument('--local_rank', type=int, default=0)

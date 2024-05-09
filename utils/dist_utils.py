@@ -34,7 +34,6 @@ def _init_dist_slurm(backend, **kwargs):
     torch.cuda.set_device(local_rank)
     proc_id = int(os.environ["SLURM_PROCID"])
     ntasks = int(os.environ["SLURM_NTASKS"])
-    dist_backend = "nccl"
     num_gpus = torch.cuda.device_count()
     # addr = subprocess.getoutput(f"scontrol show hostname {node_list} | head -n1")
     # # specify master port
@@ -51,7 +50,7 @@ def _init_dist_slurm(backend, **kwargs):
     addr = os.environ["MASTER_ADDR"]
     print(f"local rank: {str(local_rank)}, global rank: {(proc_id*num_gpus)+local_rank}, world size: {ntasks * num_gpus}, node: {ntasks}, port: {port}, addr: {addr}")
     torch.distributed.init_process_group(
-        backend=dist_backend, rank=(proc_id*num_gpus)+local_rank, world_size=ntasks * num_gpus
+        backend=backend, rank=(proc_id*num_gpus)+local_rank, world_size=ntasks * num_gpus
     )
     torch.distributed.barrier()
 

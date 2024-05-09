@@ -20,9 +20,9 @@ def main():
         args.distributed = False
     else:
         args.distributed = True
-        if args.distributed == 'pytorch':
+        if args.launcher == 'pytorch':
             dist_utils.init_dist(args.launcher)
-        elif args.distributed == 'slurm':
+        elif args.launcher == 'slurm':
             dist_utils.init_dist(args.launcher, local_rank=args.local_rank)
         # re-set gpu_ids with distributed training mode
         _, world_size = dist_utils.get_dist_info()
@@ -61,7 +61,7 @@ def main():
         logger.info(f'Set random seed to {args.seed}, '
                     f'deterministic: {args.deterministic}')
         misc.set_random_seed(args.seed + args.local_rank, deterministic=args.deterministic) # seed + rank, for augmentation
-    if args.distributed:
+    if args.distributed and not args.launcher == 'slurm':
         assert args.local_rank == torch.distributed.get_rank() 
 
     # run
