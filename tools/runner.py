@@ -188,7 +188,9 @@ def run_net(args, config, train_writer=None, val_writer=None):
                             (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
                             ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
                 print_log(f'ETA: {eta_str}', logger = logger)
-                
+             
+            break
+           
         if config.scheduler.type != 'function':
             if isinstance(scheduler, list):
                 for item in scheduler:
@@ -238,10 +240,14 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
             dataset_name = config.dataset.val._base_.NAME
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
+            elif dataset_name == 'SceneVerseDataset':
+                points = data[0].cuda()
+                num_group = data[1][0].item()
+                group_size = data[2][0].item()
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
-            ret = base_model(inp = points, hard=True, eval=True)
+            ret = base_model(inp = points, hard=True, eval=True, num_group=num_group, group_size=group_size)
             coarse_points = ret[0]
             dense_points = ret[1]
 
@@ -291,30 +297,31 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
             torch.cuda.synchronize()
      
     # Print testing results
-    shapenet_dict = json.load(open('./data/shapenet_synset_dict.json', 'r'))
-    print_log('============================ TEST RESULTS ============================',logger=logger)
-    msg = ''
-    msg += 'Taxonomy\t'
-    msg += '#Sample\t'
-    for metric in test_metrics.items:
-        msg += metric + '\t'
-    msg += '#ModelName\t'
-    print_log(msg, logger=logger)
-
-    for taxonomy_id in category_metrics:
+    if dataset_name == 'ShapeNet':
+        shapenet_dict = json.load(open('./data/shapenet_synset_dict.json', 'r'))
+        print_log('============================ TEST RESULTS ============================',logger=logger)
         msg = ''
-        msg += (taxonomy_id + '\t')
-        msg += (str(category_metrics[taxonomy_id].count(0)) + '\t')
-        for value in category_metrics[taxonomy_id].avg():
-            msg += '%.3f \t' % value
-        msg += shapenet_dict[taxonomy_id] + '\t'
+        msg += 'Taxonomy\t'
+        msg += '#Sample\t'
+        for metric in test_metrics.items:
+            msg += metric + '\t'
+        msg += '#ModelName\t'
         print_log(msg, logger=logger)
 
-    msg = ''
-    msg += 'Overall\t\t'
-    for value in test_metrics.avg():
-        msg += '%.3f \t' % value
-    print_log(msg, logger=logger)
+        for taxonomy_id in category_metrics:
+            msg = ''
+            msg += (taxonomy_id + '\t')
+            msg += (str(category_metrics[taxonomy_id].count(0)) + '\t')
+            for value in category_metrics[taxonomy_id].avg():
+                msg += '%.3f \t' % value
+            msg += shapenet_dict[taxonomy_id] + '\t'
+            print_log(msg, logger=logger)
+
+        msg = ''
+        msg += 'Overall\t\t'
+        for value in test_metrics.avg():
+            msg += '%.3f \t' % value
+        print_log(msg, logger=logger)
 
     # Add testing results to TensorBoard
     if val_writer is not None:

@@ -70,13 +70,15 @@ class SceneVerseDataset(Dataset):
         self._npoint = config.N_POINTS
         self._group_size = config.GROUP_SIZE
         self._num_groups = config.NUM_GROUP
-        _all_dataset_name = ['3RScan', 'HM3D', 'MultiScan', 'ARKitScenes']
+        _all_dataset_name = ['3RScan', 'HM3D', 'MultiScan', 'ARKitScenes', 'ScanNet', 'Structured3D']
     
         self._all_dataset_root = 'data/SceneVerse'
         self._all_scans = []
         self.dataset_names = []
         for dataset_name in _all_dataset_name:
             path = f'{self._all_dataset_root}/{dataset_name}/scan_data/pcd_with_global_alignment'
+            if not os.path.exists(path):
+                continue
             data = glob.glob(f'{path}/*.pth')
             data = [d.split('/')[-1] for d in data]
             self.dataset_names.extend([dataset_name] * len(data))
@@ -206,7 +208,7 @@ class SceneVerseDataset(Dataset):
             points, colors, _, instance_labels, inst_to_label = self._load_scan_data(scan_name, dataset_name)
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
             points = self.pc_norm(points)
-            return dataset_name, scan_name, (points.astype(np.float32), self._num_groups, self._group_size)
+            return scan_name, dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
         elif level == 'region':
             region_data = np.load(os.path.join('data/SceneVerse/RegionData', data))
             dataset_name = data.split('/')[-1].split('_')[0]
@@ -214,7 +216,7 @@ class SceneVerseDataset(Dataset):
             points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             points = self.pc_norm(points)
-            return dataset_name, scan_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
+            return scan_name, dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
         elif level == 'instance':
             obj_pcd = self.objaverse_data.load_obj_pcd(data)
             points = obj_pcd[:, :3]
