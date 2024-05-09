@@ -188,8 +188,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                             (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
                             ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
                 print_log(f'ETA: {eta_str}', logger = logger)
-             
-            break
            
         if config.scheduler.type != 'function':
             if isinstance(scheduler, list):
@@ -240,6 +238,8 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
             dataset_name = config.dataset.val._base_.NAME
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
+                num_group = None
+                group_size = None
             elif dataset_name == 'SceneVerseDataset':
                 points = data[0].cuda()
                 num_group = data[1][0].item()

@@ -1,5 +1,5 @@
 import numpy as np
-import os, sys, h5py
+import os, sys
 from torch.utils.data import Dataset
 import torch
 from .build import DATASETS

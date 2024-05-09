@@ -6,7 +6,7 @@
 # @Email:  cshzxie@gmail.com
 
 import logging
-import open3d
+# import open3d
 
 from extensions.chamfer_dist import ChamferDistanceL1, ChamferDistanceL2
 
