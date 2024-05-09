@@ -525,6 +525,9 @@ class Point_BERT(nn.Module):
 
 
     def forward(self, pts, noaug = False, **kwargs):
+        if not kwargs.get('num_group') is None:
+            self.group_divider.num_group = kwargs['num_group']
+            self.group_divider.group_size = kwargs['group_size']
         if noaug:
             return self.forward_eval(pts)
         else:

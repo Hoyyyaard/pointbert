@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import os
 import json
+import datetime
 from tools import builder
 from utils import misc, dist_utils
 import time
+from tqdm import tqdm
 from utils.logger import *
 from utils.AverageMeter import AverageMeter
 from utils.metrics import Metrics
@@ -91,8 +93,10 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
     # trainval
     # training
+    epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
     base_model.zero_grad()
     for epoch in range(start_epoch, config.max_epoch + 1):
+        epoch_tqdm.update(1)
         if args.distributed:
             train_sampler.set_epoch(epoch)
         base_model.train()
@@ -102,30 +106,39 @@ def run_net(args, config, train_writer=None, val_writer=None):
         batch_time = AverageMeter()
         data_time = AverageMeter()
         losses = AverageMeter(['Loss1', 'Loss2'])
+        from utils.misc import SmoothedValue
+        time_delta = SmoothedValue(window_size=10)
 
         num_iter = 0
 
         base_model.train()  # set model to training mode
         n_batches = len(train_dataloader)
         for idx, (taxonomy_ids, model_ids, data) in enumerate(train_dataloader):
+            curr_time = time.time()
             num_iter += 1
             n_itr = epoch * n_batches + idx
             
             data_time.update(time.time() - batch_start_time)
             npoints = config.dataset.train.others.npoints
             dataset_name = config.dataset.train._base_.NAME
+            num_group = None
+            group_size = None
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
             elif dataset_name == 'ModelNet':
                 points = data[0].cuda()
                 points = misc.fps(points, npoints)   
+            elif dataset_name == 'SceneVerseDataset':
+                points = data[0].cuda()
+                num_group = data[1][0].item()
+                group_size = data[2][0].item()
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
-            assert points.size(1) == npoints
+            # assert points.size(1) == npoints
             points = train_transforms(points)
             
-            loss_1, loss_2 = base_model(points)
+            loss_1, loss_2 = base_model(points, num_group=num_group, group_size=group_size)
 
             _loss = loss_1 + loss_2
 
@@ -157,11 +170,18 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
             batch_time.update(time.time() - batch_start_time)
             batch_start_time = time.time()
+            
+            time_delta.update(time.time() - curr_time)
 
             if idx % 20 == 0:
                 print_log('[Epoch %d/%d][Batch %d/%d] BatchTime = %.3f (s) DataTime = %.3f (s) Losses = %s lr = %.6f' %
                             (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
                             ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
+                eta_seconds = (n_batches - idx) * time_delta.avg
+                eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+                print_log(f'ETA: {eta_str}', logger = logger)
+                
+        
         if isinstance(scheduler, list):
             for item in scheduler:
                 item.step(epoch)
