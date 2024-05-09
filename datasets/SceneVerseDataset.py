@@ -153,7 +153,10 @@ class SceneVerseDataset(Dataset):
     
     def _load_scan(self, pcd_path, inst2label_path, scan_name):
         pcd_data = torch.load(os.path.join(pcd_path, f'{scan_name}'))
-        inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}"))
+        try:
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}"))
+        except:
+            inst_to_label = None
         points, colors, instance_labels = pcd_data[0], pcd_data[1], pcd_data[-1]
     
         pcds = np.concatenate([points, colors], 1)
@@ -272,6 +275,7 @@ class RegionVerseDataset(SceneVerseDataset):
         os.makedirs(save_dir, exist_ok=True)
         self._all_region = []
         SAMPLE_REGION_PER_SCAN = 10
+        SAMPLE_REGION_RATIO = 0.2
         SAMPLE_NPOINT_PRE_REGION = 10000
         pbar = tqdm(total=len(self._all_scans))
         for dataset_name, scan_name in (zip(self.dataset_names, self._all_scans)):
@@ -280,6 +284,7 @@ class RegionVerseDataset(SceneVerseDataset):
             # visualization_pointclouds(points, colors / 255)
             if len(points) < int(SAMPLE_NPOINT_PRE_REGION * 2):
                 continue
+            # SAMPLE_NPOINT_PRE_REGION = int(len(points) * SAMPLE_REGION_RATIO)
             kd_tree = cKDTree(points)
             inst_ids = np.unique(instance_labels)
             for ri in range(SAMPLE_REGION_PER_SCAN):

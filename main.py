@@ -20,7 +20,10 @@ def main():
         args.distributed = False
     else:
         args.distributed = True
-        dist_utils.init_dist(args.launcher)
+        if args.distributed == 'pytorch':
+            dist_utils.init_dist(args.launcher)
+        elif args.distributed == 'slurm':
+            dist_utils.init_dist(args.launcher, local_rank=args.local_rank)
         # re-set gpu_ids with distributed training mode
         _, world_size = dist_utils.get_dist_info()
         args.world_size = world_size
