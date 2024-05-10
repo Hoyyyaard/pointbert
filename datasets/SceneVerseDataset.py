@@ -363,8 +363,8 @@ class RegionVerseDataset(SceneVerseDataset):
                 # visualization_pointclouds(region_points, region_colors / 255)
                 
                 # Save region data here
-                # np.savez_compressed(os.path.join(save_dir, f'{dataset_name}_{scan_name}_{ri}_{inst_id}.npz'), 
-                #     points=region_points, colors=region_colors, instance_labels=region_instance_labels)
+                np.savez_compressed(os.path.join(save_dir, f'{dataset_name}_{scan_name}_{ri}_{inst_id}.npz'), 
+                    points=region_points, colors=region_colors, instance_labels=region_instance_labels)
                 
                 self._all_region.append((region_points, region_colors, region_instance_labels))
     

@@ -189,7 +189,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                             ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
                 print_log(f'ETA: {eta_str}', logger = logger)
             
-            break
            
         if config.scheduler.type != 'function':
             if isinstance(scheduler, list):
