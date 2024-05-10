@@ -211,7 +211,7 @@ class SceneVerseDataset(Dataset):
             points, colors, _, instance_labels, inst_to_label = self._load_scan_data(scan_name, dataset_name)
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
             points = self.pc_norm(points)
-            return scan_name, dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
+            return f'{scan_name}_{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
         elif level == 'region':
             region_data = np.load(os.path.join('data/SceneVerse/RegionData', data))
             dataset_name = data.split('/')[-1].split('_')[0]
@@ -219,14 +219,14 @@ class SceneVerseDataset(Dataset):
             points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             points = self.pc_norm(points)
-            return scan_name, dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
+            return f'{scan_name}_{level}', dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
         elif level == 'instance':
             obj_pcd = self.objaverse_data.load_obj_pcd(data)
             points = obj_pcd[:, :3]
             colors = obj_pcd[:, 3:]
             points, colors, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
             points = self.pc_norm(points)
-            return data, 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
+            return f'{data}_object', 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
             
             
 
@@ -279,31 +279,92 @@ class RegionVerseDataset(SceneVerseDataset):
         SAMPLE_NPOINT_PRE_REGION = 10000
         pbar = tqdm(total=len(self._all_scans))
         for dataset_name, scan_name in (zip(self.dataset_names, self._all_scans)):
+            # print(dataset_name)
+            # print(scan_name)
             pbar.update(1)
             points, colors, pcds, instance_labels, inst_to_label = self._load_scan_data(scan_name, dataset_name)
+        
+            # if len(points) < int(SAMPLE_NPOINT_PRE_REGION * 2):
+            #     continue
+            # kd_tree = cKDTree(points)
+            
+            # Visualization the scene level group
+            """ from utils import misc
+            ds_point = misc.fps(torch.from_numpy(points).unsqueeze(0).float().cuda(), self._npoint).cpu().numpy()[0]
+            kd_tree = cKDTree(ds_point)
+            
+            dvae_colors = np.ones_like(ds_point) * 0.5
+            center = misc.fps(torch.from_numpy(ds_point).unsqueeze(0).float().cuda(), self._num_groups).cpu().numpy()
+            for c in center[0]:
+                distances, indices = kd_tree.query(c, k=self._group_size)
+                dvae_colors[indices] = np.repeat(np.random.rand(1, 3), repeats=self._group_size, axis=0)
+            visualization_pointclouds(ds_point, dvae_colors)
+            continue """
+        
             # visualization_pointclouds(points, colors / 255)
-            if len(points) < int(SAMPLE_NPOINT_PRE_REGION * 2):
-                continue
-            # SAMPLE_NPOINT_PRE_REGION = int(len(points) * SAMPLE_REGION_RATIO)
-            kd_tree = cKDTree(points)
+            
             inst_ids = np.unique(instance_labels)
             for ri in range(SAMPLE_REGION_PER_SCAN):
                 inst_id = np.random.choice(inst_ids)
                 inst_pc = points[instance_labels == inst_id]
                 
-                # ''' 1. Random sample instance points 2. Sample nearest N point use KDTree
+                ''' 1. Random sample instance points 2. Sample nearest N point use KDTree
                 inst_pc_id = np.random.choice(inst_pc.shape[0])
                 distances, indices = kd_tree.query(inst_pc[inst_pc_id], k=SAMPLE_NPOINT_PRE_REGION)
                 region_points = points[indices]
                 region_colors = colors[indices]
                 region_instance_labels = instance_labels[indices]
+                '''
+                
+                # ''' 1. Random sample one instance 2. Comput instance bounding box 3. Sample points in the scale bounding box
+                import open3d
+                tmp_pc = open3d.geometry.PointCloud()
+                tmp_pc.points = open3d.utility.Vector3dVector(inst_pc)
+                bbox = tmp_pc.get_axis_aligned_bounding_box()
+                whl = bbox.get_max_bound() - bbox.get_min_bound()
+                bbox_size = whl[0] * whl[1] * whl[2]
+                # As we want the sample region's size between 1 m3 and 2 m3
+                if bbox_size > 2:
+                    continue
+                # print(bbox_size)
+                if bbox_size <= 0.001:
+                    scale = (1024 * (0.001 - bbox_size) * 10000)**(1/3)
+                elif 0.01 >= bbox_size > 0.001:
+                    scale = (128 * (0.01 - bbox_size) * 1000)**(1/3)
+                elif 0.1 >= bbox_size > 0.01:
+                    scale = (16 * (0.1 - bbox_size) * 100)**(1/3)
+                elif 1 >=  bbox_size > 0.1:
+                    scale = (2 * (1 - bbox_size) * 10)**(1/3)
+                elif bbox_size > 1:
+                    scale = 1
+                # print(scale)
+                # Scale bbox to N bbox
+                bbox.scale(scale)
+                min_bound = bbox.get_min_bound()
+                max_bound = bbox.get_max_bound()
+                whl = bbox.get_max_bound() - bbox.get_min_bound()
+                scale_bbox_size = whl[0] * whl[1] * whl[2]
+                # print(scale_bbox_size)
+                
+                # raw_point_cloud_dims_min = points[..., :3].min(axis=0)
+                # raw_point_cloud_dims_max = points[..., :3].max(axis=0)
+                # min_bound[-1] = raw_point_cloud_dims_min[-1]
+                # max_bound[-1] = raw_point_cloud_dims_max[-1]
+                indices_within_bbox = []
+                for i, point in enumerate(points):
+                    if np.all(min_bound <= point) and np.all(point <= max_bound):
+                        indices_within_bbox.append(i)
+                region_points = points[indices_within_bbox]
+                region_colors = colors[indices_within_bbox]
+                region_instance_labels = instance_labels[indices_within_bbox]
                 # '''
                 
+                # print(len(region_points))
                 # visualization_pointclouds(region_points, region_colors / 255)
                 
                 # Save region data here
-                np.savez_compressed(os.path.join(save_dir, f'{dataset_name}_{scan_name}_{ri}_{inst_id}.npz'), 
-                    points=region_points, colors=region_colors, instance_labels=region_instance_labels)
+                # np.savez_compressed(os.path.join(save_dir, f'{dataset_name}_{scan_name}_{ri}_{inst_id}.npz'), 
+                #     points=region_points, colors=region_colors, instance_labels=region_instance_labels)
                 
                 self._all_region.append((region_points, region_colors, region_instance_labels))
     

@@ -6,8 +6,7 @@
 # @Email:  cshzxie@gmail.com
 
 import logging
-# import open3d
-
+import torch
 from extensions.chamfer_dist import ChamferDistanceL1, ChamferDistanceL2
 
 
@@ -65,11 +64,17 @@ class Metrics(object):
                 f_score_list.append(cls._get_f_score(pred[idx:idx+1], gt[idx:idx+1]))
             return sum(f_score_list)/len(f_score_list)
         else:
-            pred = cls._get_open3d_ptcloud(pred)
-            gt = cls._get_open3d_ptcloud(gt)
+            # As aimos-dcs donot support open3d, we take place it with torch.cdist 
+            # pred = cls._get_open3d_ptcloud(pred)
+            # gt = cls._get_open3d_ptcloud(gt)
 
-            dist1 = pred.compute_point_cloud_distance(gt)
-            dist2 = gt.compute_point_cloud_distance(pred)
+            # dist1 = pred.compute_point_cloud_distance(gt)
+            # dist2 = gt.compute_point_cloud_distance(pred) 
+            
+            pred = pred.squeeze()
+            gt = gt.squeeze()
+            dist1 = torch.cdist(pred, gt).min(dim=-1).values.cpu().numpy().tolist()
+            dist2 = torch.cdist(gt, pred).min(dim=-1).values.cpu().numpy().tolist()
 
             recall = float(sum(d < th for d in dist2)) / float(len(dist2))
             precision = float(sum(d < th for d in dist1)) / float(len(dist1))
@@ -78,6 +83,7 @@ class Metrics(object):
     @classmethod
     def _get_open3d_ptcloud(cls, tensor):
         """pred and gt bs is 1"""
+        import open3d
         tensor = tensor.squeeze().cpu().numpy()
         ptcloud = open3d.geometry.PointCloud()
         ptcloud.points = open3d.utility.Vector3dVector(tensor)

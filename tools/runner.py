@@ -188,6 +188,8 @@ def run_net(args, config, train_writer=None, val_writer=None):
                             (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
                             ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
                 print_log(f'ETA: {eta_str}', logger = logger)
+            
+            break
            
         if config.scheduler.type != 'function':
             if isinstance(scheduler, list):
@@ -368,13 +370,15 @@ def test(base_model, test_dataloader, args, config, logger = None):
         "03759954"
     ]
     with torch.no_grad():
+        pbar = tqdm(total = len(test_dataloader), desc = 'Testing', position = 0)
         for idx, (taxonomy_ids, model_ids, data) in enumerate(test_dataloader):
+            pbar.update(1)
             # import pdb; pdb.set_trace()
+            dataset_name = config.dataset.test._base_.NAME
             if dataset_name == 'ShapeNet':
                 if  taxonomy_ids[0] not in useful_cate:
                     continue
-    
-            dataset_name = config.dataset.test._base_.NAME
+            
             num_group = None
             group_size = None
             if dataset_name == 'ShapeNet':
