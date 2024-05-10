@@ -370,17 +370,24 @@ def test(base_model, test_dataloader, args, config, logger = None):
     with torch.no_grad():
         for idx, (taxonomy_ids, model_ids, data) in enumerate(test_dataloader):
             # import pdb; pdb.set_trace()
-            if  taxonomy_ids[0] not in useful_cate:
-                continue
+            if dataset_name == 'ShapeNet':
+                if  taxonomy_ids[0] not in useful_cate:
+                    continue
     
             dataset_name = config.dataset.test._base_.NAME
+            num_group = None
+            group_size = None
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
+            elif dataset_name == 'SceneVerseDataset':
+                points = data[0].cuda()
+                num_group = data[1][0].item()
+                group_size = data[2][0].item()
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
 
-            ret = base_model(inp = points, hard=True, eval=True)
+            ret = base_model(inp = points, hard=True, eval=True, group_size=group_size, num_group=num_group)
             dense_points = ret[1]
 
             final_image = []

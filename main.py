@@ -45,12 +45,19 @@ def main():
     if args.distributed:
         assert config.total_bs % world_size == 0
         config.dataset.train.others.bs = config.total_bs // world_size
+        config.dataset.train.others.tbs = config.total_bs
         config.dataset.val.others.bs = 1
+        config.dataset.val.others.tbs = 1
         config.dataset.test.others.bs = 1
+        config.dataset.test.others.tbs = 1
     else:
         config.dataset.train.others.bs = config.total_bs
+        config.dataset.train.others.tbs = config.total_bs
         config.dataset.val.others.bs = 1
+        config.dataset.val.others.tbs = 1
         config.dataset.test.others.bs = 1
+        config.dataset.test.others.tbs = 1
+        
     # log 
     log_args_to_file(args, 'args', logger = logger)
     log_config_to_file(config, 'config', logger = logger)

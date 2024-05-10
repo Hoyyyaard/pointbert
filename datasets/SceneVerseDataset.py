@@ -102,17 +102,17 @@ class SceneVerseDataset(Dataset):
             self._load_objaverse_data()
             
             if config.subset == 'train':
-                self._all_scans_datasets = self._all_scans_datasets[:-1000]
-                self._all_region = self._all_region[:-1000]
+                self._all_scans_datasets = self._all_scans_datasets[:-10000]
+                self._all_region = self._all_region[:-10000]
                 self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[:200000]
             else:
-                self._all_scans_datasets = self._all_scans_datasets[-1000:]
-                self._all_region = self._all_region[-1000:]
-                self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[-1000:]           
+                self._all_scans_datasets = self._all_scans_datasets[-10000:]
+                self._all_region = self._all_region[-10000:]
+                self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[-10000:]           
 
             # As diffent dataset has different number of points, we need to specify the dataset squence order 
             # to make sure samples from on batch come from the same level dataset
-            batch_size_pre_rank = config.bs
+            batch_size_pre_rank = config.tbs
             self.order_episodes = []
             self.order_levels = []
             random.shuffle(self._all_scans_datasets)

@@ -21,7 +21,10 @@ def main():
         args.distributed = False
     else:
         args.distributed = True
-        dist_utils.init_dist(args.launcher)
+        if args.launcher == 'pytorch':
+            dist_utils.init_dist(args.launcher)
+        elif args.launcher == 'slurm':
+            dist_utils.init_dist(args.launcher, local_rank=args.local_rank)
         # re-set gpu_ids with distributed training mode
         _, world_size = dist_utils.get_dist_info()
         args.world_size = world_size
@@ -43,18 +46,24 @@ def main():
     if args.distributed:
         assert config.total_bs % world_size == 0
         config.dataset.train.others.bs = config.total_bs // world_size
+        config.dataset.train.others.tbs = config.total_bs
         if config.dataset.get('extra_train'):
             config.dataset.extra_train.others.bs = config.total_bs // world_size * 2
         config.dataset.val.others.bs = config.total_bs // world_size * 2
+        config.dataset.val.others.tbs = config.total_bs
         if config.dataset.get('test'):
             config.dataset.test.others.bs = config.total_bs // world_size 
+            config.dataset.test.others.tbs = config.total_bs
     else:
         config.dataset.train.others.bs = config.total_bs
+        config.dataset.train.others.tbs = config.total_bs
         if config.dataset.get('extra_train'):
             config.dataset.extra_train.others.bs = config.total_bs * 2
         config.dataset.val.others.bs = config.total_bs * 2
+        config.dataset.val.others.tbs = config.total_bs
         if config.dataset.get('test'):
             config.dataset.test.others.bs = config.total_bs 
+            config.dataset.test.others.tbs = config.total_bs
     # log 
     log_args_to_file(args, 'args', logger = logger)
     log_config_to_file(config, 'config', logger = logger)
@@ -65,7 +74,7 @@ def main():
         logger.info(f'Set random seed to {args.seed}, '
                     f'deterministic: {args.deterministic}')
         misc.set_random_seed(args.seed + args.local_rank, deterministic=args.deterministic) # seed + rank, for augmentation
-    if args.distributed:
+    if args.distributed and not args.launcher == 'slurm':
         assert args.local_rank == torch.distributed.get_rank() 
 
     if args.shot != -1:
