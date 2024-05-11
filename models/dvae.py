@@ -248,7 +248,7 @@ class Decoder(nn.Module):
         '''
         bs, g, c = feature_global.shape
         feature_global = feature_global.reshape(bs * g, c)
-
+  
         coarse = self.mlp(feature_global).reshape(bs * g, self.num_coarse, 3) # BG M 3
 
         point_feat = coarse.unsqueeze(2).expand(-1, -1, self.grid_size**2, -1) # BG (M) S 3
@@ -333,7 +333,11 @@ class DiscreteVAE(nn.Module):
         if not kwargs.get('num_group') is None:
             self.group_divider.num_group = kwargs['num_group']
             self.group_divider.group_size = kwargs['group_size']
-            self.decoder.num_fine = kwargs['group_size']
+        #     self.decoder.num_fine = kwargs['group_size']
+        #     self.decoder.num_coarse = self.decoder.num_fine // 4
+        # else:
+        #     self.decoder.num_fine = self.group_size
+        #     self.decoder.num_coarse = self.decoder.num_fine // 4
         neighborhood, center = self.group_divider(inp)   # B NPOINT 3
         logits = self.encoder(neighborhood)   #  B G C
         logits = self.dgcnn_1(logits, center) #  B G N
@@ -341,7 +345,6 @@ class DiscreteVAE(nn.Module):
         sampled = torch.einsum('b g n, n c -> b g c', soft_one_hot, self.codebook) # B G C
         feature = self.dgcnn_2(sampled, center)
         coarse, fine = self.decoder(feature)
-
 
         with torch.no_grad():
             whole_fine = (fine + center.unsqueeze(2)).reshape(inp.size(0), -1, 3)

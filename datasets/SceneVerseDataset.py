@@ -70,7 +70,7 @@ class SceneVerseDataset(Dataset):
         self._npoint = config.N_POINTS
         self._group_size = config.GROUP_SIZE
         self._num_groups = config.NUM_GROUP
-        _all_dataset_name = ['3RScan', 'HM3D', 'MultiScan', 'ARKitScenes', 'ScanNet', 'Structured3D']
+        _all_dataset_name = ['3RScan', 'HM3D', 'MultiScan', 'ARKitScenes', 'ScanNet']
     
         self._all_dataset_root = 'data/SceneVerse'
         self._all_scans = []
@@ -264,7 +264,31 @@ class RegionVerseDataset(SceneVerseDataset):
         self._num_groups = config.NUM_GROUP
         self._group_size = config.GROUP_SIZE
         if config.PREPROCESS:
+            rank = (torch.distributed.get_rank())
+            world_size = (torch.distributed.get_world_size())
+            self.all_info = [(scan, dn) for scan, dn in zip(self._all_scans, self.dataset_names)]
+            random.shuffle(self.all_info)
+            
+            self._all_scans = []
+            self.dataset_names = []
+            for info in self.all_info:
+                self._all_scans.append(info[0])
+                self.dataset_names.append(info[1])
+                
+            dist.broadcast_object_list(self._all_scans, src=0)
+            dist.broadcast_object_list(self.dataset_names, src=0)
+            
+            if world_size > 1:
+                total_scan_num = len(self._all_scans)
+                scan_num_per_rank = int(total_scan_num // world_size)
+                # Alloc the scans to each rank
+                start_idx = rank * scan_num_per_rank
+                end_idx = (rank + 1) * scan_num_per_rank if rank != world_size - 1 else total_scan_num
+                print(f'Rank {rank} has {end_idx - start_idx} scans from {start_idx} to {end_idx}')
+                self._all_scans = self._all_scans[start_idx:end_idx]
+                self.dataset_names = self.dataset_names[start_idx:end_idx]
             self._preprocess_scene_to_region()
+            torch.distributed.barrier()
             assert False
         else:
             self._load_region_from_disk()
@@ -308,6 +332,14 @@ class RegionVerseDataset(SceneVerseDataset):
                 inst_id = np.random.choice(inst_ids)
                 inst_pc = points[instance_labels == inst_id]
                 
+                if not len(inst_pc) > 500:
+                    continue
+                
+                save_path = os.path.join(save_dir, f'{dataset_name}_{scan_name}_{ri}.npz')
+                if os.path.exists(save_path):
+                    continue
+                
+                
                 ''' 1. Random sample instance points 2. Sample nearest N point use KDTree
                 inst_pc_id = np.random.choice(inst_pc.shape[0])
                 distances, indices = kd_tree.query(inst_pc[inst_pc_id], k=SAMPLE_NPOINT_PRE_REGION)
@@ -320,6 +352,7 @@ class RegionVerseDataset(SceneVerseDataset):
                 import open3d
                 tmp_pc = open3d.geometry.PointCloud()
                 tmp_pc.points = open3d.utility.Vector3dVector(inst_pc)
+
                 bbox = tmp_pc.get_axis_aligned_bounding_box()
                 whl = bbox.get_max_bound() - bbox.get_min_bound()
                 bbox_size = whl[0] * whl[1] * whl[2]
@@ -363,7 +396,7 @@ class RegionVerseDataset(SceneVerseDataset):
                 # visualization_pointclouds(region_points, region_colors / 255)
                 
                 # Save region data here
-                np.savez_compressed(os.path.join(save_dir, f'{dataset_name}_{scan_name}_{ri}_{inst_id}.npz'), 
+                np.savez_compressed(save_path, 
                     points=region_points, colors=region_colors, instance_labels=region_instance_labels)
                 
                 self._all_region.append((region_points, region_colors, region_instance_labels))

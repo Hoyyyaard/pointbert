@@ -2,4 +2,4 @@
 
 set -x
 
-python main.py --config cfgs/MultiScale_models/dvae_preprocess.yaml --exp_name preprocess_region
+python -m torch.distributed.launch --master_port=29500 --nproc_per_node=8  main.py --launcher pytorch --config cfgs/MultiScale_models/dvae_preprocess.yaml --exp_name preprocess_region
