@@ -102,11 +102,11 @@ class SceneVerseDataset(Dataset):
             self._load_objaverse_data()
             
             if config.subset == 'train':
-                self._all_scans_datasets = self._all_scans_datasets[:-10000]
+                self._all_scans_datasets = self._all_scans_datasets[:-1000]
                 self._all_region = self._all_region[:-10000]
                 self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[:200000]
             else:
-                self._all_scans_datasets = self._all_scans_datasets[-10000:]
+                self._all_scans_datasets = self._all_scans_datasets[-1000:]
                 self._all_region = self._all_region[-10000:]
                 self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[-10000:]           
 
@@ -204,6 +204,7 @@ class SceneVerseDataset(Dataset):
         return len(self.order_episodes)
         
     def __getitem__(self, index):
+        
         level = self.order_levels[index]
         data = self.order_episodes[index]
         if level == 'scene':
@@ -211,7 +212,7 @@ class SceneVerseDataset(Dataset):
             points, colors, _, instance_labels, inst_to_label = self._load_scan_data(scan_name, dataset_name)
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
             points = self.pc_norm(points)
-            return f'{scan_name}_{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
+            return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
         elif level == 'region':
             region_data = np.load(os.path.join('data/SceneVerse/RegionData', data))
             dataset_name = data.split('/')[-1].split('_')[0]
@@ -219,14 +220,14 @@ class SceneVerseDataset(Dataset):
             points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             points = self.pc_norm(points)
-            return f'{scan_name}_{level}', dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
+            return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
         elif level == 'instance':
             obj_pcd = self.objaverse_data.load_obj_pcd(data)
             points = obj_pcd[:, :3]
             colors = obj_pcd[:, 3:]
             points, colors, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
             points = self.pc_norm(points)
-            return f'{data}_object', 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
+            return f'{data}@object', 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
             
             
 

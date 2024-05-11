@@ -5,10 +5,10 @@ set -x
 
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
 # export CUDA_VISIBLE_DEVICES=2,3,5,6,4,0,7,1
-# export MKL_NUM_THREADS=1
-# export NUMEXPR_NUM_THREADS=1
-# export OMP_NUM_THREADS=1
-
+export MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export HOME=/gpfs/u/home/LMCG/LMCGljnn/scratch
 RANDOM=$$
 DIV=1000
 OFFSET=24000

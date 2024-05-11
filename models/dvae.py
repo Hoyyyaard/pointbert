@@ -210,7 +210,7 @@ class Encoder(nn.Module):
         return feature_global.reshape(bs, g, self.encoder_channel)
 
 class Decoder(nn.Module):
-    def __init__(self, encoder_channel, num_fine):
+    def __init__(self, encoder_channel, num_fine, has_level=None):
         super().__init__()
         self.num_fine = num_fine
         self.grid_size = 2
@@ -224,6 +224,24 @@ class Decoder(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(1024, 3 * self.num_coarse)
         )
+        
+        if not has_level is None:
+            print_log(f'Using level MLP !!!', logger='root')
+            self.region_mlp = nn.Sequential(
+                nn.Linear(encoder_channel, 1024),
+                nn.ReLU(inplace=True),
+                nn.Linear(1024, 1024),
+                nn.ReLU(inplace=True),
+                nn.Linear(1024, 3 * 8)
+            )
+            self.scene_mlp = nn.Sequential(
+                nn.Linear(encoder_channel, 1024),
+                nn.ReLU(inplace=True),
+                nn.Linear(1024, 1024),
+                nn.ReLU(inplace=True),
+                nn.Linear(1024, 3 * 32)
+            )
+        
         self.final_conv = nn.Sequential(
             nn.Conv1d(encoder_channel + 3 + 2, 512, 1),
             nn.BatchNorm1d(512),
@@ -238,7 +256,7 @@ class Decoder(nn.Module):
         self.folding_seed = torch.cat([a, b], dim=0).view(1, 2, self.grid_size ** 2) # 1 2 S
 
 
-    def forward(self, feature_global):
+    def forward(self, feature_global, level=None):
         '''
             feature_global : B G C
             -------
@@ -248,8 +266,13 @@ class Decoder(nn.Module):
         '''
         bs, g, c = feature_global.shape
         feature_global = feature_global.reshape(bs * g, c)
-  
-        coarse = self.mlp(feature_global).reshape(bs * g, self.num_coarse, 3) # BG M 3
+
+        if level is None or level == 'object':
+            coarse = self.mlp(feature_global).reshape(bs * g, self.num_coarse, 3) # BG M 3
+        elif level == 'region':
+            coarse = self.region_mlp(feature_global).reshape(bs * g, self.num_coarse, 3) # BG M 3
+        elif level == 'scene':
+            coarse = self.scene_mlp(feature_global).reshape(bs * g, self.num_coarse, 3)
 
         point_feat = coarse.unsqueeze(2).expand(-1, -1, self.grid_size**2, -1) # BG (M) S 3
         point_feat = point_feat.reshape(bs * g, self.num_fine, 3).transpose(2, 1) # BG 3 N
@@ -281,18 +304,15 @@ class DiscreteVAE(nn.Module):
         self.decoder_dims = config.decoder_dims
         self.num_tokens = config.num_tokens
 
-        
         self.group_divider = Group(num_group = self.num_group, group_size = self.group_size)
         self.encoder = Encoder(encoder_channel = self.encoder_dims)
         self.dgcnn_1 = DGCNN(encoder_channel = self.encoder_dims, output_channel = self.num_tokens)
         self.codebook = nn.Parameter(torch.randn(self.num_tokens, self.tokens_dims))
 
         self.dgcnn_2 = DGCNN(encoder_channel = self.tokens_dims, output_channel = self.decoder_dims)
-        self.decoder = Decoder(encoder_channel = self.decoder_dims, num_fine = self.group_size)
+        self.decoder = Decoder(encoder_channel = self.decoder_dims, num_fine = self.group_size, has_level=config.get('has_level', None))
         self.build_loss_func()
 
-        
-        
     def build_loss_func(self):
         self.loss_func_cdl1 = ChamferDistanceL1().cuda()
         self.loss_func_cdl2 = ChamferDistanceL2().cuda()
@@ -333,24 +353,24 @@ class DiscreteVAE(nn.Module):
         if not kwargs.get('num_group') is None:
             self.group_divider.num_group = kwargs['num_group']
             self.group_divider.group_size = kwargs['group_size']
-        #     self.decoder.num_fine = kwargs['group_size']
-        #     self.decoder.num_coarse = self.decoder.num_fine // 4
-        # else:
-        #     self.decoder.num_fine = self.group_size
-        #     self.decoder.num_coarse = self.decoder.num_fine // 4
+            self.decoder.num_fine = kwargs['group_size']
+            self.decoder.num_coarse = self.decoder.num_fine // 4
+        else:
+            self.decoder.num_fine = self.group_size
+            self.decoder.num_coarse = self.decoder.num_fine // 4
         neighborhood, center = self.group_divider(inp)   # B NPOINT 3
         logits = self.encoder(neighborhood)   #  B G C
         logits = self.dgcnn_1(logits, center) #  B G N
         soft_one_hot = F.gumbel_softmax(logits, tau = temperature, dim = 2, hard = hard) # B G N
         sampled = torch.einsum('b g n, n c -> b g c', soft_one_hot, self.codebook) # B G C
         feature = self.dgcnn_2(sampled, center)
-        coarse, fine = self.decoder(feature)
+        coarse, fine = self.decoder(feature, level=kwargs.get('level'))
 
         with torch.no_grad():
             whole_fine = (fine + center.unsqueeze(2)).reshape(inp.size(0), -1, 3)
             whole_coarse = (coarse + center.unsqueeze(2)).reshape(inp.size(0), -1, 3)
 
-        assert fine.size(2) == self.group_size
+        assert fine.size(2) == self.group_divider.group_size
         ret = (whole_coarse, whole_fine, coarse, fine, neighborhood, logits)
         return ret
 

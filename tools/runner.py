@@ -80,7 +80,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         if args.sync_bn:
             base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
             print_log('Using Synchronized BatchNorm ...', logger = logger)
-        base_model = nn.parallel.DistributedDataParallel(base_model, device_ids=[args.local_rank % torch.cuda.device_count()])
+        base_model = nn.parallel.DistributedDataParallel(base_model, device_ids=[args.local_rank % torch.cuda.device_count()], find_unused_parameters=True)
         print_log('Using Distributed Data parallel ...' , logger = logger)
     else:
         print_log('Using Data parallel ...' , logger = logger)
@@ -131,19 +131,21 @@ def run_net(args, config, train_writer=None, val_writer=None):
             dataset_name = config.dataset.train._base_.NAME
             num_group = None
             group_size = None
+            level = None
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
             elif dataset_name == 'SceneVerseDataset':
                 points = data[0].cuda()
                 num_group = data[1][0].item()
                 group_size = data[2][0].item()
+                level = taxonomy_ids[0].split("@")[-1]
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
             temp = get_temp(config, n_itr)
 
 
-            ret = base_model(points, temperature = temp, hard = False, num_group=num_group, group_size=group_size)
+            ret = base_model(points, temperature = temp, hard = False, num_group=num_group, group_size=group_size, level=level)
 
             loss_1, loss_2 = base_model.module.get_loss(ret, points)
 
@@ -188,7 +190,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                             (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
                             ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
                 print_log(f'ETA: {eta_str}', logger = logger)
-            
            
         if config.scheduler.type != 'function':
             if isinstance(scheduler, list):
@@ -271,7 +272,7 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
                 category_metrics[taxonomy_id] = AverageMeter(Metrics.names())
             category_metrics[taxonomy_id].update(_metrics)
 
-            vis_list = [0, 1000, 1600, 1800, 2400, 3400]
+            vis_list = [0, 100, 200, 300, 400, 500]
             if val_writer is not None and idx in vis_list: #% 200 == 0:
                 input_pc = points.squeeze().detach().cpu().numpy()
                 input_pc = misc.get_ptcloud_img(input_pc)
@@ -286,7 +287,7 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
                 val_writer.add_image('Model%02d/Dense' % idx, dense_img, epoch, dataformats='HWC')
        
         
-            if (idx+1) % 2000 == 0:
+            if (idx+1) % 200 == 0:
                 print_log('Test[%d/%d] Taxonomy = %s Sample = %s Losses = %s Metrics = %s' %
                             (idx + 1, n_samples, taxonomy_id, model_id, ['%.4f' % l for l in test_losses.val()], 
                             ['%.4f' % m for m in _metrics]), logger=logger)

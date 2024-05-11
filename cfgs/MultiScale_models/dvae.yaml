@@ -40,6 +40,7 @@ model : {
   tokens_dims: 256, 
   decoder_dims: 256, 
 
+  has_level: True
   # N_POINTS: 40000,
   # NUM_GROUP: 64,
   # GROUP_SIZE: 128 ,
@@ -53,7 +54,7 @@ model : {
   # INSTANCE_GROUP_SIZE: 32,
 }
 
-total_bs : 960
+total_bs : 16
 step_per_update : 1
 max_epoch : 300
 

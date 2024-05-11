@@ -14,7 +14,7 @@ scheduler: {
 
 dataset : {
   train : { _base_: cfgs/dataset_configs/SceneVerse.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True}},
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: False}},
   val : { _base_: cfgs/dataset_configs/ModelNet40.yaml, 
             others: {subset: 'test'}},
   extra_train : { _base_: cfgs/dataset_configs/ModelNet40.yaml, 
@@ -45,10 +45,11 @@ model : {
     num_tokens: 16384,
     tokens_dims: 256, 
     decoder_dims: 256, 
-    ckpt: TODO # set the dVAE weight here
+    has_level: True,
+    ckpt: experiments/dvae/MultiScale_models/debug/ckpt-last.pth # set the dVAE weight here
   }}
 
-total_bs : 128
+total_bs : 16
 step_per_update : 1
 max_epoch : 300
 

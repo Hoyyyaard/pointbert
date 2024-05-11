@@ -123,6 +123,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
             dataset_name = config.dataset.train._base_.NAME
             num_group = None
             group_size = None
+            level = None
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
             elif dataset_name == 'ModelNet':
@@ -132,13 +133,14 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 points = data[0].cuda()
                 num_group = data[1][0].item()
                 group_size = data[2][0].item()
+                level = taxonomy_ids[0].split("@")[-1]
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
             # assert points.size(1) == npoints
             points = train_transforms(points)
             
-            loss_1, loss_2 = base_model(points, num_group=num_group, group_size=group_size)
+            loss_1, loss_2 = base_model(points, num_group=num_group, group_size=group_size, level=level)
 
             _loss = loss_1 + loss_2
 

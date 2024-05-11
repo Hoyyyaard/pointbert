@@ -5,10 +5,10 @@ set -x
 
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
 # export CUDA_VISIBLE_DEVICES=2,3,5,6,4,0,7,1
-# export MKL_NUM_THREADS=1
-# export NUMEXPR_NUM_THREADS=1
-# export OMP_NUM_THREADS=1
-
+export MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export HOME=/gpfs/u/home/LMCG/LMCGljnn/scratch
 RANDOM=$$
 DIV=1000
 OFFSET=24000
@@ -53,6 +53,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main.py \
     --launcher slurm --sync_bn \
     --config cfgs/MultiScale_models/dvae.yaml \
-    --exp_name multiscale_dvae \
+    --exp_name multiscale_dvae_wlevelmlp \
     # --resume  
 
