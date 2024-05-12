@@ -239,7 +239,7 @@ class Decoder(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Linear(1024, 1024),
                 nn.ReLU(inplace=True),
-                nn.Linear(1024, 3 * 32)
+                nn.Linear(1024, 3 * 64)
             )
         
         self.final_conv = nn.Sequential(

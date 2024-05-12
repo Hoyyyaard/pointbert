@@ -242,14 +242,16 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
                 points = data.cuda()
                 num_group = None
                 group_size = None
+                level = None
             elif dataset_name == 'SceneVerseDataset':
                 points = data[0].cuda()
                 num_group = data[1][0].item()
                 group_size = data[2][0].item()
+                level = taxonomy_ids[0].split("@")[-1]
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
-            ret = base_model(inp = points, hard=True, eval=True, num_group=num_group, group_size=group_size)
+            ret = base_model(inp = points, hard=True, eval=True, num_group=num_group, group_size=group_size, level=level)
             coarse_points = ret[0]
             dense_points = ret[1]
 

@@ -36,7 +36,7 @@ model : {
   group_size: 32, 
   num_group: 64, 
   encoder_dims: 256,
-  num_tokens: 16384,
+  num_tokens: 8192,
   tokens_dims: 256, 
   decoder_dims: 256, 
 
@@ -54,7 +54,7 @@ model : {
   # INSTANCE_GROUP_SIZE: 32,
 }
 
-total_bs : 16
+total_bs : 4
 step_per_update : 1
 max_epoch : 300
 

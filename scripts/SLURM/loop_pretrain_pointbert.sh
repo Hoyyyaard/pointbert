@@ -1,6 +1,6 @@
 NUM_GPUS_PER_NODE=${2:-6}
-NUM_NODES=${3:-8}
-JOB_ID=${4:-"dvae"}
+NUM_NODES=${3:-5}
+JOB_ID=${4:-"pointbert"}
 LOOP_COUNTER=0
 SCRIPT=${1:-"/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/scripts/SLURM/train.multiscale.pointbert.sh"}
 
