@@ -232,14 +232,14 @@ class Decoder(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Linear(1024, 1024),
                 nn.ReLU(inplace=True),
-                nn.Linear(1024, 3 * 8)
+                nn.Linear(1024, 3 * 24)
             )
             self.scene_mlp = nn.Sequential(
                 nn.Linear(encoder_channel, 1024),
                 nn.ReLU(inplace=True),
                 nn.Linear(1024, 1024),
                 nn.ReLU(inplace=True),
-                nn.Linear(1024, 3 * 64)
+                nn.Linear(1024, 3 * 96)
             )
         
         self.final_conv = nn.Sequential(
@@ -308,7 +308,11 @@ class DiscreteVAE(nn.Module):
         self.encoder = Encoder(encoder_channel = self.encoder_dims)
         self.dgcnn_1 = DGCNN(encoder_channel = self.encoder_dims, output_channel = self.num_tokens)
         self.codebook = nn.Parameter(torch.randn(self.num_tokens, self.tokens_dims))
-
+        has_level=config.get('has_level', None)
+        if has_level:
+            self.region_codebook = nn.Parameter(torch.randn(self.num_tokens, self.tokens_dims))
+            self.scene_codebook = nn.Parameter(torch.randn(self.num_tokens, self.tokens_dims))
+        
         self.dgcnn_2 = DGCNN(encoder_channel = self.tokens_dims, output_channel = self.decoder_dims)
         self.decoder = Decoder(encoder_channel = self.decoder_dims, num_fine = self.group_size, has_level=config.get('has_level', None))
         self.build_loss_func()
@@ -362,9 +366,18 @@ class DiscreteVAE(nn.Module):
         logits = self.encoder(neighborhood)   #  B G C
         logits = self.dgcnn_1(logits, center) #  B G N
         soft_one_hot = F.gumbel_softmax(logits, tau = temperature, dim = 2, hard = hard) # B G N
-        sampled = torch.einsum('b g n, n c -> b g c', soft_one_hot, self.codebook) # B G C
+        
+        level = kwargs.get('level')
+        if level is None or level == 'object':
+            activate_codebook = self.codebook
+        elif level == 'region':
+            activate_codebook = self.region_codebook
+        elif level == 'scene':
+            activate_codebook = self.scene_codebook
+        sampled = torch.einsum('b g n, n c -> b g c', soft_one_hot, activate_codebook) # B G C
+        
         feature = self.dgcnn_2(sampled, center)
-        coarse, fine = self.decoder(feature, level=kwargs.get('level'))
+        coarse, fine = self.decoder(feature, level=level)
 
         with torch.no_grad():
             whole_fine = (fine + center.unsqueeze(2)).reshape(inp.size(0), -1, 3)

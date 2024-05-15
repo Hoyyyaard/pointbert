@@ -33,10 +33,10 @@ dataset : {
             others: {subset: 'test', npoints: -1, shuffle: False}}}
 model : {
   NAME: DiscreteVAE, 
-  group_size: 32, 
-  num_group: 64, 
+  group_size: 16, 
+  num_group: 128, 
   encoder_dims: 256,
-  num_tokens: 8192,
+  num_tokens: 16384,
   tokens_dims: 256, 
   decoder_dims: 256, 
 

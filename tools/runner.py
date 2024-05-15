@@ -383,17 +383,20 @@ def test(base_model, test_dataloader, args, config, logger = None):
             
             num_group = None
             group_size = None
+            level = None
             if dataset_name == 'ShapeNet':
                 points = data.cuda()
             elif dataset_name == 'SceneVerseDataset':
                 points = data[0].cuda()
                 num_group = data[1][0].item()
                 group_size = data[2][0].item()
+                level = taxonomy_ids[0].split("@")[-1]
             else:
                 raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
-
-            ret = base_model(inp = points, hard=True, eval=True, group_size=group_size, num_group=num_group)
+            print(taxonomy_ids)
+            
+            ret = base_model(inp = points, hard=True, eval=True, group_size=group_size, num_group=num_group, level=level)
             dense_points = ret[1]
 
             final_image = []
@@ -403,14 +406,21 @@ def test(base_model, test_dataloader, args, config, logger = None):
                 os.makedirs(data_path)
 
             points = points.squeeze().detach().cpu().numpy()
+            
+            visualization_pointclouds(points)
+            
             np.savetxt(os.path.join(data_path,'gt.txt'), points, delimiter=';')
             points = misc.get_ptcloud_img(points)
             final_image.append(points)
-
+            
             dense_points = dense_points.squeeze().detach().cpu().numpy()
+            
+            visualization_pointclouds(dense_points)
+            
             np.savetxt(os.path.join(data_path,'dense_points.txt'), dense_points, delimiter=';')
             dense_points = misc.get_ptcloud_img(dense_points)
             final_image.append(dense_points)
+            
 
             img = np.concatenate(final_image, axis=1)
             img_path = os.path.join(data_path, f'plot.jpg')
@@ -420,3 +430,11 @@ def test(base_model, test_dataloader, args, config, logger = None):
                 break
 
         return 
+
+def visualization_pointclouds(pc, color=None):
+    import open3d as o3d
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pc)
+    if not color is None:
+        pcd.colors = o3d.utility.Vector3dVector(color)
+    o3d.visualization.draw_geometries([pcd])
