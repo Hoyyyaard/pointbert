@@ -377,7 +377,7 @@ class MaskTransformer(nn.Module):
         replaced_group_input_tokens = group_input_tokens * (1 - replace_mask) + shuffled_group_input_tokens * replace_mask
         return replaced_group_input_tokens, overall_mask
 
-    def forward(self, neighborhood, center, return_all_tokens = False, only_cls_tokens = False, noaug = False):
+    def forward(self, neighborhood, center, return_all_tokens = False, only_cls_tokens = False, noaug = False, wo_head=False):
         # generate mask
         if self.mask_rand:
             bool_masked_pos = self._mask_center_rand(center, noaug = noaug) # B G
@@ -404,6 +404,9 @@ class MaskTransformer(nn.Module):
         # transformer
         x = self.blocks(x, pos)
         x = self.norm(x)
+        # For LLM input, role as a encoder
+        if wo_head:
+            return x[:, 0], x[:, 1:]
         # only return the cls feature, for moco contrast
         if only_cls_tokens:
             return self.cls_head(x[:, 0])
@@ -522,13 +525,28 @@ class Point_BERT(nn.Module):
         mixup_dvae_label = dvae_label * mixup_mask + dvae_label.flip(0) * (1 - mixup_mask)
 
         return mixup_ratio.to(neighborhood.device), mixup_neighborhood, mixup_center, mixup_dvae_label.long()
+    
+    def forward_encoder(self, pts):
+        with torch.no_grad():
+            neighborhood, center = self.group_divider(pts)
+            # produce the gt point tokens
+            gt_logits = self.dvae.encoder(neighborhood) 
+            gt_logits = self.dvae.dgcnn_1(gt_logits, center) #  B G N
+            dvae_label = gt_logits.argmax(-1).long() # B G 
+            # forward the query model in mask style 1.
+            q_cls_feature, logits = self.transformer_q(neighborhood, center, return_all_tokens=True, noaug=True, wo_head=True) # logits :  N G C 
+            q_cls_feature = nn.functional.normalize(q_cls_feature, dim=1)
 
-
+        return q_cls_feature, logits
+    
     def forward(self, pts, noaug = False, **kwargs):
         if not kwargs.get('num_group') is None:
             self.group_divider.num_group = kwargs['num_group']
             self.group_divider.group_size = kwargs['group_size']
-        if noaug:
+            
+        if not kwargs.get('forward_encoder') is None:
+            return self.forward_encoder(pts)  
+        elif noaug:
             return self.forward_eval(pts)
         else:
             # divide the point cloud in the same form. This is important

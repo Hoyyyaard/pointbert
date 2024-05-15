@@ -49,6 +49,7 @@ def evaluate_svm(train_features, train_labels, test_features, test_labels):
     pred = clf.predict(test_features)
     return np.sum(test_labels == pred) * 1. / pred.shape[0]
 
+
 def run_net(args, config, train_writer=None, val_writer=None):
     logger = get_logger(args.log_name)
     # build dataset
@@ -78,19 +79,19 @@ def run_net(args, config, train_writer=None, val_writer=None):
         builder.load_model(base_model, args.start_ckpts, logger = logger)
 
     # DDP
-    # if args.distributed:
-    #     # Sync BN
-    #     if args.sync_bn:
-    #         base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
-    #         print_log('Using Synchronized BatchNorm ...', logger = logger)
-    #     base_model = nn.parallel.DistributedDataParallel(base_model, device_ids=[args.local_rank % torch.cuda.device_count()], find_unused_parameters=True)
-    #     print_log('Using Distributed Data parallel ...' , logger = logger)
-    # else:
-    #     print_log('Using Data parallel ...' , logger = logger)
-    #     base_model = nn.DataParallel(base_model).cuda()
+    if args.distributed:
+        # Sync BN
+        if args.sync_bn:
+            base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
+            print_log('Using Synchronized BatchNorm ...', logger = logger)
+        base_model = nn.parallel.DistributedDataParallel(base_model, device_ids=[args.local_rank % torch.cuda.device_count()], find_unused_parameters=True)
+        print_log('Using Distributed Data parallel ...' , logger = logger)
+    else:
+        print_log('Using Data parallel ...' , logger = logger)
+        base_model = nn.DataParallel(base_model).cuda()
     
     # optimizer & scheduler
-    # optimizer, scheduler = builder.build_opti_sche(base_model, config)
+    optimizer, scheduler = builder.build_llm_pretrain_opti_sche(base_model, config)
     
     if args.resume:
         builder.resume_optimizer(optimizer, args, logger = logger)
@@ -109,7 +110,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         batch_start_time = time.time()
         batch_time = AverageMeter()
         data_time = AverageMeter()
-        losses = AverageMeter(['Loss1', 'Loss2'])
+        losses = AverageMeter(['Loss'])
         from utils.misc import SmoothedValue
         time_delta = SmoothedValue(window_size=10)
 
@@ -124,35 +125,15 @@ def run_net(args, config, train_writer=None, val_writer=None):
             num_iter += 1
             n_itr = epoch * n_batches + idx
             
-            continue
-            
             data_time.update(time.time() - batch_start_time)
-            npoints = config.dataset.train.others.npoints
-            dataset_name = config.dataset.train._base_.NAME
-            num_group = None
-            group_size = None
-            level = None
-            if dataset_name == 'ShapeNet':
-                points = data.cuda()
-            elif dataset_name == 'ModelNet':
-                points = data[0].cuda()
-                points = misc.fps(points, npoints)   
-            elif dataset_name == 'SceneVerseDataset':
-                points = data[0].cuda()
-                num_group = data[1][0].item()
-                group_size = data[2][0].item()
-                level = taxonomy_ids[0].split("@")[-1]
-            else:
-                raise NotImplementedError(f'Train phase do not support {dataset_name}')
 
             # assert points.size(1) == npoints
-            points = train_transforms(points)
+            # As we have some grouding episode which do not suitable for pointcloud aug
+            # points = train_transforms(points)
             
-            loss_1, loss_2 = base_model(points, num_group=num_group, group_size=group_size, level=level)
-
-            _loss = loss_1 + loss_2
-
-            _loss.backward()
+            loss = base_model(data_dict)
+            
+            loss.backward()
 
             # forward
             if num_iter == config.step_per_update:
@@ -161,11 +142,10 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 base_model.zero_grad()
 
             if args.distributed:
-                loss_1 = dist_utils.reduce_tensor(loss_1, args)
-                loss_2 = dist_utils.reduce_tensor(loss_2, args)
-                losses.update([loss_1.item(), loss_2.item()])
+                loss = dist_utils.reduce_tensor(loss, args)
+                losses.update([loss.item()])
             else:
-                losses.update([loss_1.item(), loss_2.item()])
+                losses.update([loss.item()])
 
 
             if args.distributed:
@@ -173,8 +153,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
 
             if train_writer is not None:
-                train_writer.add_scalar('Loss/Batch/Loss_1', loss_1.item(), n_itr)
-                train_writer.add_scalar('Loss/Batch/Loss_2', loss_2.item(), n_itr)
+                train_writer.add_scalar('Loss/Batch/Loss', loss.item(), n_itr)
                 train_writer.add_scalar('Loss/Batch/LR', optimizer.param_groups[0]['lr'], n_itr)
 
 
@@ -200,8 +179,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         epoch_end_time = time.time()
 
         if train_writer is not None:
-            train_writer.add_scalar('Loss/Epoch/Loss_1', losses.avg(0), epoch)
-            train_writer.add_scalar('Loss/Epoch/Loss_2', losses.avg(1), epoch)
+            train_writer.add_scalar('Loss/Epoch/Loss', losses.avg(0), epoch)
 
         print_log('[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s' %
             (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)

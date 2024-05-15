@@ -39,8 +39,8 @@ model : {
     return_all_tokens: False, 
   },
   dvae_config : {
-    group_size: 32, 
-    num_group: 64, 
+    group_size: 16, 
+    num_group: 128, 
     encoder_dims: 256,
     num_tokens: 16384,
     tokens_dims: 256, 

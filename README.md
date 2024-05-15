@@ -79,8 +79,8 @@ bash scripts/train.sh <GPU_IDS>\
 Visualize the reconstruction results of a pre-trained dVAE, run: (default path: `./vis`)
 ```
 bash ./scripts/test.sh <GPU_IDS> \
-    --ckpts <path>\
-    --config cfgs/ShapeNet55_models/dvae.yaml\
+    --ckpts <path> \
+    --config cfgs/ShapeNet55_models/dvae.yaml \
     --exp_name <name>
 ```
 

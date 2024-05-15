@@ -404,10 +404,11 @@ class RegionVerseDataset(SceneVerseDataset):
                 min_bound = center - fixed_whl / 2.0
                 max_bound = center + fixed_whl / 2.0
                 
-                indices_within_bbox = []
-                for i, point in enumerate(points):
-                    if np.all(min_bound <= point) and np.all(point <= max_bound):
-                        indices_within_bbox.append(i)
+                # indices_within_bbox = []
+                # for i, point in enumerate(points):
+                #     if np.all(min_bound <= point) and np.all(point <= max_bound):
+                #         indices_within_bbox.append(i)
+                indices_within_bbox = np.where(np.all((points >= min_bound) & (points <= max_bound), axis=1))[0]
                 region_points = points[indices_within_bbox]
                 region_colors = colors[indices_within_bbox]
                 region_instance_labels = instance_labels[indices_within_bbox]
@@ -506,13 +507,13 @@ class SceneVerseLLMPretrainDataset(Dataset):
         region_aug_pcd = {p:[] for p in region_aug_pcd}
         for dataset_name, annotations in all_dataset_dict.items():
             # Process scene caption: {scan_name: [captions]}
-            # ~10k
+            # ~41k
             scene_annos = annotations.get('scene_caption')
             for scan_name, captions in scene_annos.items():
                 self.all_scene_caption.extend([{'dataset_name':dataset_name, "scan_name":scan_name, "anno":{'utterance':cap}, "task_name": "scene_caption"} for cap in captions['captions']])
             
             # Process region caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
-            # ~370k
+            # ~410k
             region_annos = annotations.get('relation_caption')
             ## Check if the pcd corresponding to the region caption exists
             for ra in region_annos:
@@ -522,7 +523,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 self.all_relation_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":ra, "task_name": "region_caption"})
             
             # Process object caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
-            # ~112k
+            # ~136k
             object_annos = annotations.get('object_caption')
             for oa in object_annos:
                 scan_name = oa['scan_id']
@@ -569,28 +570,26 @@ class SceneVerseLLMPretrainDataset(Dataset):
         random.shuffle(self.all_relation_caption)
         self.all_relation_caption = self.all_relation_caption[:200000]
         random.shuffle(self.all_object_caption)
-        dist.broadcast_object_list(self.all_scene_caption, src=0)
-        dist.broadcast_object_list(self.all_relation_caption, src=0)
-        dist.broadcast_object_list(self.all_object_caption, src=0)
         
-        # if config.subset == 'train':
-        #     self.all_scene_caption = self.all_scene_caption[:-1000]
-        #     self.all_relation_caption = self.all_relation_caption[:-10000]
-        #     self.all_object_caption = self.all_object_caption[:-10000]
-        # else:
-        #     self.all_scene_caption = self.all_scene_caption[-1000:]
-        #     self.all_relation_caption = self.all_relation_caption[-10000:]
-        #     self.all_object_caption = self.all_object_caption[-10000:]           
+        # Debug
+        # dist.broadcast_object_list(self.all_scene_caption, src=0)
+        # dist.broadcast_object_list(self.all_relation_caption, src=0)
+        # dist.broadcast_object_list(self.all_object_caption, src=0)
+        
+        if config.subset == 'train':
+            self.all_scene_caption = self.all_scene_caption[:-1000]
+            self.all_relation_caption = self.all_relation_caption[:-10000]
+            self.all_object_caption = self.all_object_caption[:-10000]
+        else:
+            self.all_scene_caption = self.all_scene_caption[-1000:]
+            self.all_relation_caption = self.all_relation_caption[-10000:]
+            self.all_object_caption = self.all_object_caption[-10000:]           
 
         # As diffent dataset has different number of points, we need to specify the dataset squence order 
         # to make sure samples from on batch come from the same level dataset
         batch_size_pre_rank = config.tbs
         self.order_episodes = []
         self.order_levels = []
-        
-        # Debug
-        self.all_scene_caption = []
-        self.all_object_caption = []
         
         while self.all_scene_caption or self.all_relation_caption or self.all_object_caption:
             if self.all_scene_caption:
@@ -674,8 +673,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
         xmax = np.max(obj_pc[:,0])
         ymax = np.max(obj_pc[:,1])
         zmax = np.max(obj_pc[:,2])
-        center = [(xmin+xmax)/2, (ymin+ymax)/2, (zmin+zmax)/2]
-        box_size = [xmax-xmin, ymax-ymin, zmax-zmin]
+        center = np.array([(xmin+xmax)/2, (ymin+ymax)/2, (zmin+zmax)/2])
+        box_size = np.array([xmax-xmin, ymax-ymin, zmax-zmin])
         return center, box_size
     
     def down_sample(self, points, colors, instance_labels=None, npoint=None):
@@ -858,8 +857,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
             path = f'{dataset_name}_{scan_name}.pth_{instance_id}.npz'
             region_data = np.load(os.path.join('data/SceneVerse/RegionAugData', path))
             points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
-            # points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
-            # points = self.pc_norm(points)
+            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
+            points = self.pc_norm(points)
             
             ret_dict = {
                 'points': points.astype(np.float32),
@@ -889,9 +888,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
             ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
-            
-            print(answers)            
-            visualization_pointclouds(points, colors / 255)
+            # print(answers)            
+            # visualization_pointclouds(points, colors / 255)
             
             return ret_dict
         
