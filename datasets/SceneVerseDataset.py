@@ -572,9 +572,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         random.shuffle(self.all_object_caption)
         
         # Debug
-        # dist.broadcast_object_list(self.all_scene_caption, src=0)
-        # dist.broadcast_object_list(self.all_relation_caption, src=0)
-        # dist.broadcast_object_list(self.all_object_caption, src=0)
+        dist.broadcast_object_list(self.all_scene_caption, src=0)
+        dist.broadcast_object_list(self.all_relation_caption, src=0)
+        dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
             self.all_scene_caption = self.all_scene_caption[:-1000]
@@ -796,6 +796,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     'dataset_name': dataset_name,
                     'level': level,
                     'scan_name': scan_name,
+                    'task_name': task_name
                 }
                 
                 caption = anno['utterance']
@@ -829,6 +830,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     'dataset_name': dataset_name,
                     'level': level,
                     'scan_name': scan_name,
+                    'task_name': task_name
                 }
                 
                 intruction = f'Describe the scene in detailed: '
@@ -868,6 +870,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'dataset_name': dataset_name,
                 'level': level,
                 'scan_name': scan_name,
+                'task_name': task_name
             }
             
             intruction = 'Describe the relation of these objects: '
@@ -917,6 +920,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'dataset_name': dataset_name,
                 'level': level,
                 'scan_name': scan_name,
+                'task_name': task_name
             }
             
             intruction = 'Describe the object: '
@@ -938,4 +942,306 @@ class SceneVerseLLMPretrainDataset(Dataset):
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
             return ret_dict
+        
+        
+        
+@DATASETS.register_module()
+class SceneVerseLLMFinetuneDataset(Dataset):
+    def __init__(self, config):
+        super().__init__()
+        self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = 'right'
+        
+        # Load scene level data
+        self._npoint = config.N_POINTS
+        self._group_size = config.GROUP_SIZE
+        self._num_groups = config.NUM_GROUP
+        _all_dataset_name = ['ScanNet']
+        self._all_dataset_root = 'data/SceneVerse'
+        self._all_scans = []
+        self.dataset_names = []
+        
+        # Step1: Load all type of annotations from all scans in ${all_dataset_dict}
+        all_dataset_dict = {}
+        for dataset_name in _all_dataset_name:
+            path = f'{self._all_dataset_root}/{dataset_name}/scan_data/pcd_with_global_alignment'
             
+            # Dict: {object_caption: {}, scene_caption: {}, relation_caption: {}}
+            dataset_anno_dict = self._load_annotation(f'{self._all_dataset_root}/{dataset_name}/annotations')
+            all_dataset_dict[dataset_name] = dataset_anno_dict
+            
+            # Filter no pcd data scan
+            if not os.path.exists(path):
+                continue
+            
+            # Load all scan pcd files
+            data = glob.glob(f'{path}/*.pth')
+            data = [d.split('/')[-1] for d in data]
+            self.dataset_names.extend([dataset_name] * len(data))
+            self._all_scans.extend(data)
+            print_log(f'[DATASET] {len(data)} scans from {dataset_name} were loaded', logger = 'SceneVerse')
+        self._all_scans_datasets = []
+        for dn, sc in zip(self.dataset_names, self._all_scans):
+            self._all_scans_datasets.append((dn, sc))
+            
+        # Finetune on the few tasks: ScanQA, Scannet scene caption, Scannet object caption
+        self.scanqa_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/qa/ScanQA_v1.0_{config.subset}.json'))
+        self.object_caption_anno =  json.load(open(f'data/SceneVerse/ScanNet/annotations/object_caption/ScanRefer_filtered_{config.subset}_qa_format.json'))
+        self.scene_caption_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/scene_caption/3d_llm_scene_description_{config.subset}.json'))
+        
+        self.all_scanqa = []
+        for scanqa in self.scanqa_anno:
+            scan_name = scanqa['scene_id']
+            self.all_scanqa.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":scanqa, "task_name": "scanqa"})
+        self.all_object_caption = []
+        for obj_cap in self.object_caption_anno:
+            scan_name = obj_cap['scene_id']
+            self.all_object_caption.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":obj_cap, "task_name": "object_caption"})
+        self.all_scene_caption = []
+        for scene_cap in self.scene_caption_anno:
+            scan_name = scene_cap['scene_id']
+            self.all_scene_caption.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":scene_cap, "task_name": "scene_caption"})
+
+        print_log(f'[DATASET] {len(self.all_scanqa)} scene qa were loaded from scan data', logger = 'SceneVerse')
+        print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data', logger = 'SceneVerse')
+        print_log(f'[DATASET] {len(self.all_scene_caption)} scene captions were loaded from scan data', logger = 'SceneVerse')
+        
+        # Load region level data
+        self._region_npoint = config.REGION_N_POINTS
+        self._region_group_size = config.REGION_GROUP_SIZE
+        self._region_num_groups = config.REGION_NUM_GROUP
+        
+        # Load some objaverse caption data 
+        self._instance_npoint = config.INSTANCE_N_POINTS
+        self._instance_group_size = config.INSTANCE_GROUP_SIZE
+        self._instance_num_groups = config.INSTANCE_NUM_GROUP
+        
+        self.order_episodes = []
+        self.order_episodes.extend(self.all_scanqa)
+        self.order_episodes.extend(self.all_scene_caption)
+        self.order_episodes.extend(self.all_object_caption)
+
+        print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
+       
+    
+    def _load_annotation(self, annotation_path):
+        dataset_name_to_annotation = {
+            'object_caption' : ('ssg_obj_caption_gpt.json', 'ssg_obj_caption_template.json'),
+            'scene_caption' : ('scene_cap.json', ),
+            'relation_caption': ('ssg_ref_chain_gpt.json', 'ssg_ref_relm_gpt.json')
+        }
+        output_annotation = {}
+        for k, v in dataset_name_to_annotation.items():
+            for fn in v:
+                if annotation_path.find('ScanNet') != -1:
+                    fp = os.path.join(annotation_path, 'refer', fn)
+                else:
+                    fp = os.path.join(annotation_path, fn)
+                if not os.path.exists(fp):
+                    continue
+                with open(fp, 'r') as f:
+                    data = json.load(f)
+                    if annotation_path.find('ScanNet') != -1 and k == 'scene_caption':
+                        data = {d['scene_id']:{"captions":d['answers']} for d in data}
+                    output_annotation[k] = data
+                break
+        return output_annotation
+
+    def _load_objaverse_data(self):
+        self.objaverse_data = Objaverse(self._instance_npoint, 'train')
+        print_log(f'[DATASET] {len(self.objaverse_data.obj_ids)} objects were loaded', logger = 'SceneVerse')
+    
+    def _load_scan(self, pcd_path, inst2label_path, scan_name):
+        pcd_data = torch.load(os.path.join(pcd_path, f'{scan_name}'))
+        try:
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}"))
+        except:
+            inst_to_label = None
+        points, colors, instance_labels = pcd_data[0], pcd_data[1], pcd_data[-1]
+    
+        pcds = np.concatenate([points, colors], 1)
+        return points, colors, pcds, instance_labels, inst_to_label
+    
+    def _load_scan_data(self, scan_name, dataset_name):
+        dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+        annotation_root = os.path.join(dataset_root, 'annotations')
+        scan_data_root = os.path.join(dataset_root, 'scan_data')
+        
+        inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+        pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
+
+        points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
+        
+        return points, colors, pcds, instance_labels, inst_to_label
+        
+    def convert_pc_to_box(self, obj_pc):
+        xmin = np.min(obj_pc[:,0])
+        ymin = np.min(obj_pc[:,1])
+        zmin = np.min(obj_pc[:,2])
+        xmax = np.max(obj_pc[:,0])
+        ymax = np.max(obj_pc[:,1])
+        zmax = np.max(obj_pc[:,2])
+        center = np.array([(xmin+xmax)/2, (ymin+ymax)/2, (zmin+zmax)/2])
+        box_size = np.array([xmax-xmin, ymax-ymin, zmax-zmin])
+        return center, box_size
+    
+    def down_sample(self, points, colors, instance_labels=None, npoint=None):
+        pcd_idxs = np.random.choice(len(points), size=npoint, replace=len(points) < npoint)
+        points = points[pcd_idxs]
+        colors = colors[pcd_idxs]
+        instance_labels = instance_labels[pcd_idxs] if not instance_labels is None else None
+        return points, colors, instance_labels
+    
+    def pc_norm(self, pc):
+        """ pc: NxC, return NxC """
+        centroid = np.mean(pc, axis=0)
+        pc = pc - centroid
+        m = np.max(np.sqrt(np.sum(pc**2, axis=1)))
+        pc = pc / m
+        return pc
+    
+    def __len__(self):
+        return len(self.order_episodes)
+    
+    def _encode_box_coords(self, gt_box_centers_normalized, gt_box_sizes_normalized):
+        grid_size_3d = 255
+        BOX_FORMAT = '<obj>{}, {}, {}, {}, {}, {}</obj>'
+        center_normalized = gt_box_centers_normalized
+        size_normalized = gt_box_sizes_normalized
+        box_normalized = np.hstack((center_normalized, size_normalized))    # (-1, 6)
+        # <cx, cy, cz, w, h, l>
+        box_normalized = (box_normalized * grid_size_3d).astype(np.int64)
+        return ' '.join(BOX_FORMAT.format(*box) for box in box_normalized)
+    
+    def _scale_points(self, pred_xyz, mult_factor):
+        if pred_xyz.ndim == 4:
+            mult_factor = mult_factor[:, None]
+        scaled_xyz = pred_xyz * mult_factor[:, None, :]
+        return scaled_xyz
+    
+    def _shift_scale_points(self, pred_xyz, src_range, dst_range=None):
+        """
+        pred_xyz: B x N x 3
+        src_range: [[B x 3], [B x 3]] - min and max XYZ coords
+        dst_range: [[B x 3], [B x 3]] - min and max XYZ coords
+        """
+        if dst_range is None:
+            dst_range = [
+                torch.zeros((src_range[0].shape[0], 3), device=src_range[0].device),
+                torch.ones((src_range[0].shape[0], 3), device=src_range[0].device),
+            ]
+
+        if pred_xyz.ndim == 4:
+            src_range = [x[:, None] for x in src_range]
+            dst_range = [x[:, None] for x in dst_range]
+
+        assert src_range[0].shape[0] == pred_xyz.shape[0]
+        assert dst_range[0].shape[0] == pred_xyz.shape[0]
+        assert src_range[0].shape[-1] == pred_xyz.shape[-1]
+        assert src_range[0].shape == src_range[1].shape
+        assert dst_range[0].shape == dst_range[1].shape
+        assert src_range[0].shape == dst_range[1].shape
+
+        src_diff = src_range[1][:, None, :] - src_range[0][:, None, :]
+        dst_diff = dst_range[1][:, None, :] - dst_range[0][:, None, :]
+        prop_xyz = (
+            ((pred_xyz - src_range[0][:, None, :]) * dst_diff) / src_diff
+        ) + dst_range[0][:, None, :]
+        return prop_xyz
+    
+    def __getitem__(self, index):
+        
+        level = 'scene'
+        data = self.order_episodes[index]
+        dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
+        
+        self.tokenizer_config = dict(
+            max_length=128, 
+            padding='max_length', 
+            truncation='longest_first', 
+            return_tensors='np'
+        )
+        
+        if level == 'scene':
+            points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
+            points = self.pc_norm(points)
+
+            if task_name == 'scanqa':
+                
+                ret_dict = {
+                    'points': points.astype(np.float32),
+                    'colors': colors.astype(np.float32),
+                    'num_groups': self._num_groups,
+                    'group_size': self._group_size,
+                    'dataset_name': dataset_name,
+                    'level': level,
+                    'scan_name': scan_name,
+                    'task_name': task_name,
+                    'unique_key': anno['question_id'] + '-'  + anno['question']
+                }
+                
+                question = anno['question']
+                intruction = f'{question}'
+                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+                
+                answers = anno['answers']
+                
+                # ret_dict['answers'] = answers
+                ret_dict['question'] = intruction
+                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+                return ret_dict
+            
+            # Scene Caption
+            elif task_name == 'scene_caption':
+                ret_dict = {
+                    'points': points.astype(np.float32),
+                    'colors': colors.astype(np.float32),
+                    'num_groups': self._num_groups,
+                    'group_size': self._group_size,
+                    'dataset_name': dataset_name,
+                    'level': level,
+                    'scan_name': scan_name,
+                    'task_name': task_name,
+                    'unique_key': anno['scene_id']
+                }
+                
+                intruction = f'Describe the scene in detailed: '
+                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+                
+                # ret_dict['answers'] = answers
+                ret_dict['question'] = intruction
+                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+                return ret_dict
+            
+            # Object Caption
+            elif task_name == 'object_caption':
+                ret_dict = {
+                    'points': points.astype(np.float32),
+                    'colors': colors.astype(np.float32),
+                    'num_groups': self._num_groups,
+                    'group_size': self._group_size,
+                    'dataset_name': dataset_name,
+                    'level': level,
+                    'scan_name': scan_name,
+                    'task_name': task_name,
+                    'unique_key': anno['scene_id'] + '-' + anno['object_id']
+                }
+                
+                intruction = f'Describe the object: '
+                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+                
+                # ret_dict['answers'] = answers
+                ret_dict['question'] = intruction
+                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+                return ret_dict
+            
+            else:
+                assert False
