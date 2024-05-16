@@ -81,8 +81,11 @@ def run_net(args, config, train_writer=None, val_writer=None):
     if args.resume:
         start_epoch, best_metric = builder.resume_model(base_model, args, logger = logger)
         best_metrics = Acc_Metric(best_metric)
-    elif args.start_ckpts is not None:
-        builder.load_model(base_model, args.start_ckpts, logger = logger)
+    else:
+        if args.ckpts is not None:
+            base_model.load_model_from_ckpt(args.ckpts)
+        else:
+            print_log('Training from scratch', logger = logger)
 
     # DDP
     if args.distributed:

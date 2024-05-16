@@ -1,11 +1,13 @@
 from torch import nn
 import torch
 from models.modeling_llama import LlamaForCausalLM
-from models.Point_BERT import Point_BERT
+from models.Point_BERT import PointTransformer
 from transformers import BitsAndBytesConfig
 import torch.nn.functional as nnf
 from transformers import AutoTokenizer
 from tools.generation_utils import generation
+from utils.logger import print_log
+from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
 
 
 class AdaptiveLLM(nn.Module):
@@ -19,11 +21,12 @@ class AdaptiveLLM(nn.Module):
         
         # For debug in 3090
         if encoder_config.quantization:
+            print_log("Quantization is enabled")
             bnb_config = BitsAndBytesConfig(
-                load_in_8bit=True,                     
-                bnb_8bit_use_double_quant=True,        
-                bnb_8bit_quant_type="nf8",            
-                bnb_8bit_compute_dtype=self.dtype      
+                load_in_4bit=True,                     
+                bnb_4bit_use_double_quant=True,        
+                bnb_4bit_quant_type="nf4",            
+                bnb_4bit_compute_dtype=self.dtype      
             )
             self.llm = LlamaForCausalLM.from_pretrained('ckpts/Llama-2-7b-hf', 
                                                         config=self._llm_config, 
@@ -36,10 +39,10 @@ class AdaptiveLLM(nn.Module):
                                             torch_dtype=self.dtype, 
                                             low_cpu_mem_usage=True)
             
-        self.encoder = Point_BERT(self._encoder_config)
+        self.encoder = PointTransformer(self._encoder_config)
         
         self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.transformer_config.trans_dim, self._llm_config.hidden_size),
+            nn.Linear(self._encoder_config.trans_dim, self._llm_config.hidden_size),
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             nn.ReLU(),
@@ -47,6 +50,33 @@ class AdaptiveLLM(nn.Module):
             nn.ReLU(),
         )
         
+    def load_model_from_ckpt(self, bert_ckpt_path):
+        ckpt = torch.load(bert_ckpt_path)
+        base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
+        for k in list(base_ckpt.keys()):
+            if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
+                base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
+            elif k.startswith('base_model'):
+                base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
+            del base_ckpt[k]
+            
+        incompatible = self.load_state_dict(base_ckpt, strict=False)
+
+        if incompatible.missing_keys:
+            print_log('missing_keys', logger = 'Transformer')
+            print_log(
+                get_missing_parameters_message(incompatible.missing_keys),
+                logger = 'Transformer'
+            )
+        if incompatible.unexpected_keys:
+            print_log('unexpected_keys', logger = 'Transformer')
+            print_log(
+                get_unexpected_parameters_message(incompatible.unexpected_keys),
+                logger = 'Transformer'
+            )
+
+        print_log(f'[Transformer] Successful Loading the ckpt from {bert_ckpt_path}', logger = 'Transformer')
+    
     def _loss_caption(self, logits, target, mask):
         loss_per_word = nnf.cross_entropy(
             logits.permute(0, 2, 1).contiguous(),
@@ -63,7 +93,7 @@ class AdaptiveLLM(nn.Module):
             points = data_dict['points']
             num_group = data_dict['num_groups'][0].item()
             group_size = data_dict['group_size'][0].item()
-            cls_tokens, encoder_tokens = self.encoder(points, num_group=num_group, group_size=group_size, forward_encoder=True)
+            cls_tokens, encoder_tokens, center, neighborhood = self.encoder(points, num_group=num_group, group_size=group_size, forward_llm=True)
             # Concat cls_tokens and encoder_tokens
             cls_tokens = cls_tokens.unsqueeze(1)
             vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
@@ -71,7 +101,6 @@ class AdaptiveLLM(nn.Module):
         vision_embed.requires_grad_(True)
         vision_embed = self.encoder_to_llm_projection(vision_embed)
         
-        # Debug
         embedding_layer = self.llm.get_input_embeddings()
         
         if not eval:
@@ -80,7 +109,6 @@ class AdaptiveLLM(nn.Module):
             input_ids = data_dict['input_ids']
             vision_mask = torch.ones_like(vision_embed[..., 0])
             # ---- batch x (ntoken + nword) x n_embd
-            # Debug
             inputs_embeds = torch.cat((vision_embed, embedding_layer(input_ids)), dim=1)
             attention_mask = torch.cat((vision_mask, input_mask), dim=1)
             

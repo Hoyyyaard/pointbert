@@ -9,4 +9,5 @@ python -m torch.distributed.launch --master_addr ${ADDR} --master_port=${PORT} -
     --launcher pytorch --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM.yaml \
     --exp_name allm \
+    --ckpt #TODO
     # --resume

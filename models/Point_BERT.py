@@ -203,7 +203,11 @@ class PointTransformer(nn.Module):
         print_log(f'[Transformer] Successful Loading the ckpt from {bert_ckpt_path}', logger = 'Transformer')
 
 
-    def forward(self, pts):
+    def forward(self, pts, **kwargs):
+        if not kwargs.get('num_group') is None:
+            self.group_divider.num_group = kwargs['num_group']
+            self.group_divider.group_size = kwargs['group_size']
+        
         # divide the point clo  ud in the same form. This is important
         neighborhood, center = self.group_divider(pts)
         # encoder the input cloud blocks
@@ -220,6 +224,9 @@ class PointTransformer(nn.Module):
         # transformer
         x = self.blocks(x, pos)
         x = self.norm(x)
+        if not kwargs.get('forward_llm') is None:
+            return x[:, 0], x[:, 1:], center, neighborhood
+            
         concat_f = torch.cat([x[:,0], x[:, 1:].max(1)[0]], dim = -1)
         ret = self.cls_head_finetune(concat_f)
         return ret

@@ -53,5 +53,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM.yaml \
     --exp_name multiscale_llm_pretrain \
+    --ckpt #TODO
     # --resume  
 
