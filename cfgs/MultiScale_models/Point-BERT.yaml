@@ -49,7 +49,7 @@ model : {
     ckpt: experiments/dvae/MultiScale_models/debug/ckpt-last.pth # set the dVAE weight here
   }}
 
-total_bs : 16
+total_bs : 512
 step_per_update : 1
 max_epoch : 300
 
