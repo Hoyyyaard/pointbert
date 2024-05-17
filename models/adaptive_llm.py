@@ -37,7 +37,10 @@ class AdaptiveLLM(nn.Module):
             self.llm = LlamaForCausalLM.from_pretrained('ckpts/Llama-2-7b-hf', 
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
-                                            low_cpu_mem_usage=True)
+                                            low_cpu_mem_usage=True,)
+            self.llm.model.gradient_checkpointing_enable()
+            self.llm.model.gradient_checkpointing = True
+            print_log("Gradient checkpointing is enabled")
             
         self.encoder = PointTransformer(self._encoder_config)
         
@@ -50,8 +53,9 @@ class AdaptiveLLM(nn.Module):
             nn.ReLU(),
         )
         
-    def load_model_from_ckpt(self, bert_ckpt_path):
-        ckpt = torch.load(bert_ckpt_path)
+    def load_model_from_ckpt(self, bert_ckpt_path, args):
+        map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
+        ckpt = torch.load(bert_ckpt_path, map_location=map_location)
         base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
         for k in list(base_ckpt.keys()):
             if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):

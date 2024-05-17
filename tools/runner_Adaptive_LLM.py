@@ -67,10 +67,12 @@ def run_net(args, config, train_writer=None, val_writer=None):
     # build model
     llm_config  = AutoConfig.from_pretrained('ckpts/Llama-2-7b-hf/config.json')
     base_model = AdaptiveLLM(llm_config, config.model)
-    if args.use_gpu:
-        base_model.to(args.local_rank)
 
     # from IPython import embed; embed()
+    
+    if args.use_gpu:
+        base_model.to(args.local_rank)
+    # print(torch.cuda.memory_summary())
     
     # parameter setting
     start_epoch = 0
@@ -83,9 +85,10 @@ def run_net(args, config, train_writer=None, val_writer=None):
         best_metrics = Acc_Metric(best_metric)
     else:
         if args.ckpts is not None:
-            base_model.load_model_from_ckpt(args.ckpts)
+            base_model.load_model_from_ckpt(args.ckpts, args)
         else:
             print_log('Training from scratch', logger = logger)
+    # print(torch.cuda.memory_summary())
 
     # DDP
     if args.distributed:
@@ -99,12 +102,26 @@ def run_net(args, config, train_writer=None, val_writer=None):
         print_log('Using Data parallel ...' , logger = logger)
         base_model = nn.DataParallel(base_model).cuda()
     
+    # print(torch.cuda.memory_summary())
+    
     # optimizer & scheduler
-    optimizer, scheduler = builder.build_llm_pretrain_opti_sche(base_model, config)
+    optimizer, scheduler, warmup_steps = builder.build_llm_pretrain_opti_sche(base_model, config, train_dataloader)
     
     if args.resume:
         builder.resume_optimizer(optimizer, args, logger = logger)
 
+    # Update learning rate at each step
+    opti_config = config.optimizer
+    sche_config = config.scheduler
+    total_epochs = sche_config.kwargs.epochs
+    warmup_ratio = opti_config.kwargs.warmup_ratio  # Warmup ratio of 3%
+    initial_lr = opti_config.kwargs.lr  # Initial learning rate
+    warmup_lr = 1e-6
+
+    # Define scheduler with warmup
+    total_steps = len(train_dataloader) * total_epochs
+    warmup_steps = int(total_steps * warmup_ratio)
+    
     # trainval
     # training
     epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
@@ -185,13 +202,23 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 eta_seconds = (n_batches - idx) * time_delta.avg
                 eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
                 print_log(f'ETA: {eta_str}', logger = logger)
+            
+                
+            # Define lambda function for warmup scheduler
+            lr_step = epoch * len(train_dataloader) + idx
+            if lr_step < warmup_steps:
+                optimizer.param_groups[0]['lr'] =  warmup_lr 
+            else:
+                optimizer.param_groups[0]['lr'] =  0.5 * (math.cos((lr_step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
+            
                 
         # Debug
-        if isinstance(scheduler, list):
-            for item in scheduler:
-                item.step(epoch)
-        else:
-            scheduler.step(epoch)
+        # if isinstance(scheduler, list):
+        #     for item in scheduler:
+        #         item.step(epoch)
+        # else:
+        #     scheduler.step(epoch)
+        
         epoch_end_time = time.time()
 
         if train_writer is not None:
@@ -202,18 +229,17 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
         # Debug
         # metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
-        
-        if epoch % args.val_freq == 0 and epoch != 0:
+        builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger)  
+        if epoch % args.val_freq == 0:
             # Validate the current model
             metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
 
             # Save ckeckpoints
             if metrics.better_than(best_metrics):
                 best_metrics = metrics
-                builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger)
-        builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger)      
+                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger) 
         if (config.max_epoch - epoch) < 10:
-            builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger)     
+            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger)     
     if train_writer is not None:
         train_writer.close()
     if val_writer is not None:
@@ -314,6 +340,10 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             
             outputs = all_gather_dict(outputs)
             data_dict = all_gather_dict(data_dict)
+            # Flatten 2d list to 1d
+            for k,v in data_dict.items():
+                if isinstance(v, list):
+                    data_dict[k] = [item for sublist in zip(*v) for item in sublist]
             
             output_ids = outputs["output_ids"]  # batch x max_length
             answers = base_model.module.tokenizer.batch_decode(
@@ -322,9 +352,10 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                 clean_up_tokenization_spaces=False
             )
             
+            
             for idx in range(output_ids.shape[0]):
-                key = data_dict['unique_key'][idx][0]
-                task_name = data_dict['task_name'][idx][0]
+                key = data_dict['unique_key'][idx]
+                task_name = data_dict['task_name'][idx]
                 answer = answers[idx]
                 answer = ' '.join(filter(lambda w: w, answer.split(' ')))
                 candidates[task_name][key] = [answer]
@@ -350,9 +381,9 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             print_log("\n----------------------Evaluation SC-----------------------\n")
             print_log(sc_message)
 
-            _log_to_disk(args, qa_message, scanqa_corpus, candidates['scanqa'], qa_score_per_caption)
-            _log_to_disk(args, oc_message, object_caption_corpus, candidates['object_caption'], oc_score_per_caption)
-            _log_to_disk(args, sc_message, scene_caption_corpus, candidates['scene_caption'], sc_score_per_caption)
+            _log_to_disk(args, qa_message, scanqa_corpus, candidates['scanqa'], qa_score_per_caption, 'scanqa')
+            _log_to_disk(args, oc_message, object_caption_corpus, candidates['object_caption'], oc_score_per_caption, 'object_caption')
+            _log_to_disk(args, sc_message, scene_caption_corpus, candidates['scene_caption'], sc_score_per_caption, 'scene_caption')
             
         if args.distributed:
             torch.cuda.synchronize()
@@ -367,17 +398,17 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
 
 
 
-def _log_to_disk(args, message, corpus, candidates, score_per_caption):
-    with open(os.path.join(args.experiment_path, "qa_scores.json"), "w") as f: 
+def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name):
+    with open(os.path.join(args.experiment_path, f"{task_name}_qa_scores.json"), "w") as f: 
                 json.dump(message, f)
             
-    with open(os.path.join(args.experiment_path, "qa_corpus_val.json"), "w") as f: 
+    with open(os.path.join(args.experiment_path, f"{task_name}_qa_corpus_val.json"), "w") as f: 
         json.dump(corpus, f, indent=4)
     
-    with open(os.path.join(args.experiment_path, "qa_pred_val.json"), "w") as f:
+    with open(os.path.join(args.experiment_path, f"{task_name}_qa_pred_val.json"), "w") as f:
         json.dump(candidates, f, indent=4)
     
-    with open(os.path.join(args.experiment_path, "qa_pred_gt_val.json"), "w") as f:
+    with open(os.path.join(args.experiment_path, f"{task_name}_qa_pred_gt_val.json"), "w") as f:
         pred_gt_val = {}
         for scene_object_id, scene_object_id_key in enumerate(candidates):
             pred_gt_val[scene_object_id_key] = {

@@ -1,15 +1,17 @@
 optimizer : {
-  type: AdamW,
+  type: Adam,
   kwargs: {
-  lr : 0.0005, 
-  weight_decay : 0.05
+  lr : 0.001, 
+  weight_decay : 0,
+  warmup_ratio: 0.03,
+
 }}
 
 scheduler: {
   type: CosLR,
   kwargs: {
-    epochs: 2,
-    initial_epochs : 1
+    epochs: 1,
+    initial_epochs : 0
 }}
 
 dataset : {
@@ -33,9 +35,9 @@ model : {
 }
 
 
-total_bs : 4
+total_bs : 12
 step_per_update : 1
-max_epoch : 2
+max_epoch : 1
 
 consider_metric: CDL1
 
