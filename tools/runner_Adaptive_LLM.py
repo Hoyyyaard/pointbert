@@ -88,15 +88,18 @@ def run_net(args, config, train_writer=None, val_writer=None):
             base_model.load_model_from_ckpt(args.ckpts, args)
         else:
             print_log('Training from scratch', logger = logger)
-    # print(torch.cuda.memory_summary())
+    print(torch.cuda.memory_summary())
 
     # DDP
+    # Debug
     if args.distributed:
         # Sync BN
         if args.sync_bn:
             base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
             print_log('Using Synchronized BatchNorm ...', logger = logger)
-        base_model = nn.parallel.DistributedDataParallel(base_model, device_ids=[args.local_rank % torch.cuda.device_count()], find_unused_parameters=True)
+        base_model = nn.parallel.DistributedDataParallel(base_model, 
+                                                        device_ids=[args.local_rank % torch.cuda.device_count()], 
+                                                        find_unused_parameters=True,)
         print_log('Using Distributed Data parallel ...' , logger = logger)
     else:
         print_log('Using Data parallel ...' , logger = logger)
@@ -105,7 +108,12 @@ def run_net(args, config, train_writer=None, val_writer=None):
     # print(torch.cuda.memory_summary())
     
     # optimizer & scheduler
-    optimizer, scheduler, warmup_steps = builder.build_llm_pretrain_opti_sche(base_model, config, train_dataloader)
+    finetune = config.get('finetune', False)
+    optimizer, scheduler, warmup_steps = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
+    print_log("Trainable parameters")
+    for n, p in base_model.module.named_parameters():
+        if p.requires_grad:
+            print_log(n)
     
     if args.resume:
         builder.resume_optimizer(optimizer, args, logger = logger)
@@ -313,7 +321,7 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
     }
     scene_caption_anno = test_dataloader.dataset.scene_caption_anno
     scene_caption_corpus = {
-        '-'.join((anno['scene_id'])): anno['answers'] \
+        anno['scene_id']: anno['answers'] \
             for anno in scene_caption_anno
     }
     
@@ -362,6 +370,12 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             
             barrier()
 
+        torch.save({'candidates':candidates,
+                    'scanqa_corpus':scanqa_corpus,
+                    'object_caption_corpus':object_caption_corpus,
+                    'scene_caption_corpus':scene_caption_corpus}, f'{args.experiment_path}_{args.exp_name}_validation_{epoch}.pth')
+        print_log("Save all validation datas")
+
         # end of forward pass traversion
         qa_score_per_caption, qa_message, qa_eval_metric = score_captions(
             OrderedDict([(key, scanqa_corpus[key]) for key in candidates['scanqa']]), candidates['scanqa']
@@ -376,8 +390,8 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
         if is_primary():
             print_log("\n----------------------Evaluation QA-----------------------\n")
             print_log(qa_message)
-            print_log("\n----------------------Evaluation OC-----------------------\n")
-            print_log(oc_message)
+            # print_log("\n----------------------Evaluation OC-----------------------\n")
+            # print_log(oc_message)
             print_log("\n----------------------Evaluation SC-----------------------\n")
             print_log(sc_message)
 
@@ -394,7 +408,7 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
         val_writer.add_scalar('Metric/OC', oc_score_per_caption['cider'], epoch)
         val_writer.add_scalar('Metric/SC', sc_score_per_caption['cider'], epoch)
 
-    return Acc_Metric(np.array(qa_score_per_caption['cider']).mean())
+    return Acc_Metric(0.)
 
 
 

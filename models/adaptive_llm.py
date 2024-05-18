@@ -32,7 +32,8 @@ class AdaptiveLLM(nn.Module):
                                                         config=self._llm_config, 
                                                         torch_dtype=self.dtype, 
                                                         low_cpu_mem_usage=True,
-                                                        quantization_config=bnb_config)
+                                                        quantization_config=bnb_config,
+                                                        )
         else:
             self.llm = LlamaForCausalLM.from_pretrained('ckpts/Llama-2-7b-hf', 
                                             config=self._llm_config, 

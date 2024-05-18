@@ -1,24 +1,24 @@
 optimizer : {
   type: Adam,
   kwargs: {
-  lr : 0.001, 
+  lr : 0.00002, 
   weight_decay : 0,
-  warmup_ratio: 0.03,
+  warmup_ratio: 0,
 
 }}
 
 scheduler: {
   type: CosLR,
   kwargs: {
-    epochs: 1,
+    epochs: 5,
     initial_epochs : 0
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/SceneVerseLLMPretrainDataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: False}},
+  train : { _base_: cfgs/dataset_configs/SceneVerseLLMFinetuneDataset.yaml, 
+            others: {subset: 'train', npoints: 1024, whole: True}},
   val : { _base_: cfgs/dataset_configs/SceneVerseLLMFinetuneDataset.yaml, 
-            others: {subset: 'val', shuffle: False}}}
+            others: {subset: 'val'}}}
 model : {
   NAME: PointTransformer, 
 
@@ -34,10 +34,10 @@ model : {
   encoder_dims: 256,
 }
 
-
-total_bs : 12
+finetune : True
+total_bs : 1
 step_per_update : 1
-max_epoch : 1
+max_epoch : 5
 
 consider_metric: CDL1
 

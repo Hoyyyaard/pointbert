@@ -187,7 +187,8 @@ def resume_model(base_model, args, logger = None):
     # parameter resume of base model
     # if args.local_rank == 0:
     base_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_model'].items()}
-    base_model.load_state_dict(base_ckpt, strict = True)
+    msg = base_model.load_state_dict(base_ckpt, strict = False)
+    print_log(msg)
 
     # parameter
     start_epoch = state_dict['epoch'] + 1

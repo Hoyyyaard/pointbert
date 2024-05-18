@@ -988,6 +988,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         # Finetune on the few tasks: ScanQA, Scannet scene caption, Scannet object caption
         self.scanqa_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/qa/ScanQA_v1.0_{config.subset}.json'))
         self.object_caption_anno =  json.load(open(f'data/SceneVerse/ScanNet/annotations/object_caption/ScanRefer_filtered_{config.subset}_qa_format.json'))
+        if config.subset == 'train':
+            new_object_caption_anno = []
+            for obj_cap in self.object_caption_anno:
+                for ans in obj_cap['answers']:
+                    new_object_caption_anno.append({'scene_id':obj_cap['scene_id'], 'object_id':obj_cap['object_id'], 'answers':[ans], 'object_name':obj_cap['object_name']})
+            self.object_caption_anno = new_object_caption_anno
         self.scene_caption_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/scene_caption/3d_llm_scene_description_{config.subset}.json'))
         
         self.all_scanqa = []
@@ -1020,7 +1026,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self.order_episodes = []
         self.order_episodes.extend(self.all_scanqa)
         self.order_episodes.extend(self.all_scene_caption)
-        self.order_episodes.extend(self.all_object_caption)
+        # TODO
+        # self.order_episodes.extend(self.all_object_caption)
 
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
@@ -1152,7 +1159,6 @@ class SceneVerseLLMFinetuneDataset(Dataset):
     
     def __getitem__(self, index):
         
-        level = 'scene'
         data = self.order_episodes[index]
         dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
         
@@ -1163,85 +1169,114 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             return_tensors='np'
         )
         
-        if level == 'scene':
-            points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+
+        points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+
+        if task_name == 'scanqa':
+            
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
             points = self.pc_norm(points)
-
-            if task_name == 'scanqa':
-                
-                ret_dict = {
-                    'points': points.astype(np.float32),
-                    'colors': colors.astype(np.float32),
-                    'num_groups': self._num_groups,
-                    'group_size': self._group_size,
-                    'dataset_name': dataset_name,
-                    'level': level,
-                    'scan_name': scan_name,
-                    'task_name': task_name,
-                    'unique_key': anno['question_id'] + '-'  + anno['question']
-                }
-                
-                question = anno['question']
-                intruction = f'{question}'
-                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-                
-                answers = anno['answers']
-                
-                # ret_dict['answers'] = answers
-                ret_dict['question'] = intruction
-                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-
-                return ret_dict
+            ret_dict = {
+                'points': points.astype(np.float32),
+                'colors': colors.astype(np.float32),
+                'num_groups': self._num_groups,
+                'group_size': self._group_size,
+                'dataset_name': dataset_name,
+                'level': 'scene',
+                'scan_name': scan_name,
+                'task_name': task_name,
+                'unique_key': anno['question_id'] + '-'  + anno['question']
+            }
             
-            # Scene Caption
-            elif task_name == 'scene_caption':
-                ret_dict = {
-                    'points': points.astype(np.float32),
-                    'colors': colors.astype(np.float32),
-                    'num_groups': self._num_groups,
-                    'group_size': self._group_size,
-                    'dataset_name': dataset_name,
-                    'level': level,
-                    'scan_name': scan_name,
-                    'task_name': task_name,
-                    'unique_key': anno['scene_id']
-                }
-                
-                intruction = f'Describe the scene in detailed: '
-                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-                
-                # ret_dict['answers'] = answers
-                ret_dict['question'] = intruction
-                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-
-                return ret_dict
+            question = anno['question']
+            intruction = f'{question}'
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
-            # Object Caption
-            elif task_name == 'object_caption':
-                ret_dict = {
-                    'points': points.astype(np.float32),
-                    'colors': colors.astype(np.float32),
-                    'num_groups': self._num_groups,
-                    'group_size': self._group_size,
-                    'dataset_name': dataset_name,
-                    'level': level,
-                    'scan_name': scan_name,
-                    'task_name': task_name,
-                    'unique_key': anno['scene_id'] + '-' + anno['object_id']
-                }
-                
-                intruction = f'Describe the object: '
-                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-                
-                # ret_dict['answers'] = answers
-                ret_dict['question'] = intruction
-                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-
-                return ret_dict
+            answers = anno['answers'][0]
+            llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+            )
             
-            else:
-                assert False
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            
+            ret_dict['question'] = intruction
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+            return ret_dict
+        
+        # Scene Caption
+        elif task_name == 'scene_caption':
+            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
+            points = self.pc_norm(points)
+            ret_dict = {
+                'points': points.astype(np.float32),
+                'colors': colors.astype(np.float32),
+                'num_groups': self._num_groups,
+                'group_size': self._group_size,
+                'dataset_name': dataset_name,
+                'level': 'scene',
+                'scan_name': scan_name,
+                'task_name': task_name,
+                'unique_key': anno['scene_id']
+            }
+            
+            intruction = f'Describe the scene in detailed: '
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            
+            # ret_dict['answers'] = answers
+            answers = anno['answers'][0]
+            llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+            )
+            
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            
+            ret_dict['question'] = intruction
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+            return ret_dict
+        
+        # Object Caption
+        # TODO
+        elif task_name == 'object_caption':
+            instance_id = int(anno['object_id'])
+            object_points = points[instance_labels == instance_id]
+            object_colors = colors[instance_labels == instance_id]
+            instance_labels = instance_labels[instance_labels == instance_id]
+            points, colors, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
+            points = self.pc_norm(points)
+            
+            ret_dict = {
+                'points': points.astype(np.float32),
+                'colors': colors.astype(np.float32),
+                'num_groups': self._num_groups,
+                'group_size': self._group_size,
+                'dataset_name': dataset_name,
+                'level': 'instance',
+                'scan_name': scan_name,
+                'task_name': task_name,
+                'unique_key': anno['scene_id'] + '-' + anno['object_id']
+            }
+            
+            intruction = f'Describe the object: '
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            
+            # ret_dict['answers'] = answers
+            ret_dict['question'] = intruction
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+            return ret_dict
+        
+        else:
+            assert False
