@@ -40,7 +40,7 @@ TASK_PROMPT = {
         '### human: illustrate the scene within the given 3D context. ### assistant:'
         '### human: characterize the scene in the specific 3D context. ### assistant:'
     ],
-    'relation_caption': [
+    'region_caption': [
         '### human: describe the relationship between the objects gievn part of the 3D scene. ### assistant:',
         '### human: describe how the objects are related in the specified part of the 3D scene. ### assistant:'
         '### human: provide details on the relationship between the objects in the indicated part of the 3D scene. ### assistant:'
@@ -138,7 +138,13 @@ class Objaverse(Dataset):
         obj_id = self.obj_ids[index]
         obj_pcd = self.load_obj_pcd(obj_id)
         return obj_pcd[:, :3], obj_pcd[:, 3:]
-        
+
+def _rotz(t):
+    """Rotation about the z-axis."""
+    c = np.cos(t)
+    s = np.sin(t)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+
         
 @DATASETS.register_module()
 class SceneVerseDataset(Dataset):
@@ -312,12 +318,6 @@ class SceneVerseDataset(Dataset):
             points = np.concatenate([points, pad_points], axis=0)
         return points
     
-    def _rotz(self, t):
-        """Rotation about the z-axis."""
-        c = np.cos(t)
-        s = np.sin(t)
-        return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    
     def __getitem__(self, index):
         
         level = self.order_levels[index]
@@ -336,7 +336,7 @@ class SceneVerseDataset(Dataset):
 
             # Rotation along up-axis/Z-axis
             rot_angle = (np.random.random() * np.pi / 18) - np.pi / 36  # -5 ~ +5 degree
-            rot_mat = self._rotz(rot_angle)
+            rot_mat = _rotz(rot_angle)
             points = np.dot(points, np.transpose(rot_mat))
             points = self.pc_norm(points)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
@@ -525,7 +525,7 @@ class RegionVerseDataset(SceneVerseDataset):
                 
                 # Save region data here
                 np.savez_compressed(save_path, 
-                    points=region_points, colors=region_colors, instance_labels=region_instance_labels)
+                    points=region_points, colors=region_colors, instance_labels=region_instance_labels, inst_to_label=inst_to_label)
                 
                 self._all_region.append((region_points, region_colors, region_instance_labels))
     
@@ -601,10 +601,15 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self.all_object_caption = []
         self.all_relation_caption = []
         
+        # Preprocess filter region caption that has instance label more than 1 in the caption ~83k
+        instance_filter_relation_caption = json.load(open('data/SceneVerse/valid_region_relation.json', 'r'))
+        exist_relation_caption = {'{}_{}.pth_{}.npz'.format(anno['dataset_name'],anno['scan_name'],anno['anno']["target_id"]):[] for anno in instance_filter_relation_caption}
+        
         region_aug_data_dir = 'data/SceneVerse/RegionAugData'
         region_aug_pcd = os.listdir(region_aug_data_dir)
         # As dict search key will fast
         region_aug_pcd = {p:[] for p in region_aug_pcd}
+        # valid_region_relation_path = []
         for dataset_name, annotations in all_dataset_dict.items():
             # Process scene caption: {scan_name: [captions]}
             # ~41k
@@ -612,15 +617,38 @@ class SceneVerseLLMPretrainDataset(Dataset):
             for scan_name, captions in scene_annos.items():
                 self.all_scene_caption.extend([{'dataset_name':dataset_name, "scan_name":scan_name, "anno":{'utterance':cap}, "task_name": "scene_caption"} for cap in captions['captions']])
             
-            # Process region caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
-            # ~410k
+            # Process region caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]  
+            
+            # Further add some relation caption that has not instance label for augment ~140k
             region_annos = annotations.get('relation_caption')
-            ## Check if the pcd corresponding to the region caption exists
-            for ra in region_annos:
+            for ra in (region_annos):
                 scan_name = ra['scan_id']
-                if f'{dataset_name}_{scan_name}.pth_{ra["target_id"]}.npz' not in region_aug_pcd.keys():
+                path = f'{dataset_name}_{scan_name}.pth_{ra["target_id"]}.npz'
+                # Check if the pcd corresponding to the region caption exists
+                if path not in region_aug_pcd.keys() or path not in exist_relation_caption.keys():
                     continue
                 self.all_relation_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":ra, "task_name": "region_caption"})
+                
+                ''' Code for filter region caption that has instance label more than 1 in the caption
+                region_data = np.load(os.path.join('data/SceneVerse/RegionAugData1', path), allow_pickle=True)
+                points, colors, instance_labels, label2text = region_data['points'], region_data['colors'], region_data['instance_labels'], region_data['inst_to_label']
+                caption = ra['utterance']
+                unique_label = np.unique(instance_labels)
+                label2text = label2text.item()
+                unique_text = [label2text[int(l)] for l in unique_label if not l <= 0]
+                text_in_caption = []
+                position = []
+                for text in unique_text:
+                    pos = caption.find(text)
+                    if not pos == -1:
+                        text_in_caption.append(text)
+                        position.append(pos)
+                
+                if len(position) == len(np.unique(position)) and len(text_in_caption) >= 2:
+                    text_in_caption = [(t,p) for t, p in zip(text_in_caption, position)]
+                    valid_region_relation_path.append(path)
+                    self.all_relation_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":ra, "task_name": "region_caption", 'text_in_caption': text_in_caption})
+                '''
             
             # Process object caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
             # ~136k
@@ -632,20 +660,21 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     continue
                 self.all_object_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":oa, "task_name": "object_caption"})
 
-        print_log(f'[DATASET] {len(self.all_scene_caption)} scene captions were loaded from scan data', logger = 'SceneVerse')
-        print_log(f'[DATASET] {len(self.all_relation_caption)} relation captions were loaded from scan data', logger = 'SceneVerse')
-        print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data', logger = 'SceneVerse')
+        # with open('data/SceneVerse/valid_region_relation_path.json', 'w') as f:
+        #     json.dump(valid_region_relation_path, f)
+        # assert False
         
         # Load region level data
         self._region_npoint = config.REGION_N_POINTS
         self._region_group_size = config.REGION_GROUP_SIZE
         self._region_num_groups = config.REGION_NUM_GROUP
         
-        # Augment object caption task into object grouding task
+        ''' Augment object caption task into object grouding task
         all_grouding_object = copy.deepcopy(self.all_object_caption)
         for data in all_grouding_object:
             data['task_name'] = 'object_grouding'
         self.all_scene_caption.extend(all_grouding_object)
+        '''
         
         # Load some objaverse caption data 
         self._instance_npoint = config.INSTANCE_N_POINTS
@@ -662,29 +691,69 @@ class SceneVerseLLMPretrainDataset(Dataset):
                                                     'scan_id': obj_dict,
                                                     'utterance': self.objaverse_data.obj_cap_dict[obj_dict]
                                                     }})
-        print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data and objaverse', logger = 'SceneVerse')
         
+        # Load some LEO scene caption data 
+        leo_scene_train_caption = json.load(open('data/LEO_DATA/annotations/alignment/scene_caption/3rscan_scenecap_train.json', 'r'))
+        leo_scene_val_caption = json.load(open('data/LEO_DATA/annotations/alignment/scene_caption/3rscan_scenecap_val.json', 'r'))
+        extend_leo_scene_caption = []
+        for scene_name, v in leo_scene_train_caption.items():
+            for cap in v:
+                extend_leo_scene_caption.append({
+                                            'dataset_name':'3RScan', 
+                                            "scan_name":scene_name, 
+                                            "task_name": "scene_caption",
+                                            "anno":{
+                                                    'utterance': cap['response']
+                                                }
+                                            })
+        for scene_name, v in leo_scene_val_caption.items():
+            for cap in v:
+                extend_leo_scene_caption.append({
+                                            'dataset_name':'3RScan', 
+                                            "scan_name":scene_name, 
+                                            "task_name": "scene_caption",
+                                            "anno":{
+                                                    'utterance': cap['response']
+                                                }
+                                            })
+            
         random.seed(0)
+        self.all_scene_caption.extend(extend_leo_scene_caption)
+        self.all_relation_caption.extend(instance_filter_relation_caption)
         random.shuffle(self.all_scene_caption)
-        # Drop to 200k
         random.shuffle(self.all_relation_caption)
-        self.all_relation_caption = self.all_relation_caption[:200000]
         random.shuffle(self.all_object_caption)
         
         # Debug
-        dist.broadcast_object_list(self.all_scene_caption, src=0)
-        dist.broadcast_object_list(self.all_relation_caption, src=0)
-        dist.broadcast_object_list(self.all_object_caption, src=0)
+        # dist.broadcast_object_list(self.all_scene_caption, src=0)
+        # dist.broadcast_object_list(self.all_relation_caption, src=0)
+        # dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
-            self.all_scene_caption = self.all_scene_caption[:-1000]
-            self.all_relation_caption = self.all_relation_caption[:-10000]
-            self.all_object_caption = self.all_object_caption[:-10000]
+            self.all_scene_caption = self.all_scene_caption[:-2000]
+            self.all_relation_caption = self.all_relation_caption[:-2000]
+            self.all_object_caption = self.all_object_caption[:-6000]
         else:
-            self.all_scene_caption = self.all_scene_caption[-1000:]
-            self.all_relation_caption = self.all_relation_caption[-10000:]
-            self.all_object_caption = self.all_object_caption[-10000:]           
+            self.all_scene_caption = self.all_scene_caption[-2000:]
+            self.all_relation_caption = self.all_relation_caption[-2000:]
+            self.all_object_caption = self.all_object_caption[-6000:]           
 
+        print_log(f'[DATASET] {len(self.all_scene_caption)} scene captions were loaded from scan data', logger = 'SceneVerse')
+        print_log(f'[DATASET] {len(self.all_relation_caption)} relation captions were loaded from scan data', logger = 'SceneVerse')
+        print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data and objaverse', logger = 'SceneVerse')
+        
+        # Add Unique ID for each episode
+        episode_id = 0
+        for data in self.all_scene_caption:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        for data in self.all_relation_caption:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        for data in self.all_object_caption:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        
         # As diffent dataset has different number of points, we need to specify the dataset squence order 
         # to make sure samples from on batch come from the same level dataset
         batch_size_pre_rank = config.tbs
@@ -715,7 +784,14 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     self.order_levels.extend(['instance'] * batch_size_pre_rank)
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
-    
+        # Prepare corpus for evaluation
+        self.corpus = {
+            'scene_caption': self.all_scene_caption,
+            'object_caption': self.all_object_caption,
+            'region_caption': self.all_relation_caption
+        }
+        
+        
     def _load_annotation(self, annotation_path):
         dataset_name_to_annotation = {
             'object_caption' : ('ssg_obj_caption_gpt.json', 'ssg_obj_caption_template.json'),
@@ -841,6 +917,35 @@ class SceneVerseLLMPretrainDataset(Dataset):
         ) + dst_range[0][:, None, :]
         return prop_xyz
     
+    def instance_id_to_bbox_str(self, tgt_id, instance_labels, points):
+        object_points = points[instance_labels == tgt_id]
+        center, whl = self.convert_pc_to_box(object_points)
+        
+        point_cloud_dims_min = points.min(axis=0)
+        point_cloud_dims_max = points.max(axis=0)
+
+        box_centers = center.astype(np.float32)
+        
+        center_normalizing_range = [
+            np.zeros((1, 3), dtype=np.float32),
+            np.ones((1, 3), dtype=np.float32),
+        ]
+        box_centers_normalized = self._shift_scale_points(
+            box_centers[None, ...],
+            src_range=[
+                point_cloud_dims_min[None, ...],
+                point_cloud_dims_max[None, ...],
+            ],
+            dst_range=center_normalizing_range,
+        )
+        mult_factor = point_cloud_dims_max - point_cloud_dims_min
+        box_sizes_normalized = self._scale_points(
+            whl.astype(np.float32)[None, ...],
+            mult_factor=1.0 / mult_factor[None, ...],
+        )
+        bbox_str = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
+        return bbox_str
+    
     def __getitem__(self, index):
         
         level = self.order_levels[index]
@@ -848,7 +953,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
         dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
         
         self.tokenizer_config = dict(
-            max_length=128, 
+            max_length=256, 
             padding='max_length', 
             truncation='longest_first', 
             return_tensors='np'
@@ -857,9 +962,10 @@ class SceneVerseLLMPretrainDataset(Dataset):
         if level == 'scene':
             points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
-            points = self.pc_norm(points)
             
             if task_name == 'object_grouding':
+                assert False
+                points = self.pc_norm(points)
                 tgt_id = int(anno['target_id'])
                 object_points = points[instance_labels == tgt_id]
                 center, whl = self.convert_pc_to_box(object_points)
@@ -922,6 +1028,20 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             # Scene Caption
             else:
+                if np.random.random() > 0.5:
+                # Flipping along the YZ plane
+                    points[:, 0] = -1 * points[:, 0]
+                if np.random.random() > 0.5:
+                    # Flipping along the XZ plane
+                    points[:, 1] = -1 * points[:, 1]
+
+                # Rotation along up-axis/Z-axis
+                rot_angle = (np.random.random() * np.pi / 18) - np.pi / 36  # -5 ~ +5 degree
+                rot_mat = _rotz(rot_angle)
+                points = np.dot(points, np.transpose(rot_mat))
+                
+                points = self.pc_norm(points)
+                
                 ret_dict = {
                     'points': points.astype(np.float32),
                     'colors': colors.astype(np.float32),
@@ -930,10 +1050,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     'dataset_name': dataset_name,
                     'level': level,
                     'scan_name': scan_name,
-                    'task_name': task_name
+                    'task_name': task_name,
+                    'episode_id': data['episode_id']
                 }
                 
-                intruction = f'Describe the scene in detailed: '
+                intruction = random.choice(TASK_PROMPT[task_name])
                 prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
                 
                 answers = anno['utterance']
@@ -970,13 +1091,26 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'dataset_name': dataset_name,
                 'level': level,
                 'scan_name': scan_name,
-                'task_name': task_name
+                'task_name': task_name,
+                'episode_id': data['episode_id']
             }
             
-            intruction = 'Describe the relation of these objects: '
+            intruction = random.choice(TASK_PROMPT[task_name])
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']
+            
+            # Add bbox after the instance
+            if data.get('text_in_caption'):
+                _, _, _, _, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+                text_in_caption = data['text_in_caption']
+                for text, pos in text_in_caption:
+                    if text in answers:
+                        for k,v in inst_to_label.items():
+                            if v == text and sum(instance_labels == int(k)) > 0 :
+                                bbox = self.instance_id_to_bbox_str(int(k), instance_labels, points)
+                                answers = answers[:pos + len(text)] + ' ' + bbox + ' ' + answers[pos + len(text):]
+
             llm_inputs = self.tokenizer.batch_encode_plus(
             [' '.join((intruction, answers, self.tokenizer.eos_token))],
             **self.tokenizer_config
@@ -1020,10 +1154,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'dataset_name': dataset_name,
                 'level': level,
                 'scan_name': scan_name,
-                'task_name': task_name
+                'task_name': task_name,
+                'episode_id': data['episode_id']
             }
             
-            intruction = 'Describe the object: '
+            intruction = random.choice(TASK_PROMPT[task_name])
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']

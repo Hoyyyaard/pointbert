@@ -90,12 +90,18 @@ def build_opti_sche(base_model, config):
     
     return optimizer, scheduler
 
-def build_llm_pretrain_opti_sche(base_model, config, train_loader):
+def build_llm_opti_sche(base_model, config, train_loader, finetune=False):
     
-    for n, p in base_model.module.llm.named_parameters():
-        p.requires_grad = False
-    for n, p in base_model.module.encoder.named_parameters():
-        p.requires_grad = False
+    if not finetune:
+        for n, p in base_model.module.llm.named_parameters():
+            p.requires_grad = False
+        for n, p in base_model.module.encoder.named_parameters():
+            p.requires_grad = False
+    else:
+        for n, p in base_model.module.llm.named_parameters():
+            p.requires_grad = True
+        for n, p in base_model.module.encoder.named_parameters():
+            p.requires_grad = False
     
     opti_params = filter(lambda p: p.requires_grad, base_model.parameters())
     

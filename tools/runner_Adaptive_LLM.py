@@ -88,7 +88,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
             base_model.load_model_from_ckpt(args.ckpts, args)
         else:
             print_log('Training from scratch', logger = logger)
-    print(torch.cuda.memory_summary())
+    # print(torch.cuda.memory_summary())
 
     # DDP
     # Debug
@@ -154,6 +154,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         n_batches = len(train_dataloader)
         pbar = tqdm(total = n_batches)
         for idx, data_dict in enumerate(train_dataloader):
+            
             pbar.update(1)
             curr_time = time.time()
             num_iter += 1
@@ -304,125 +305,189 @@ def score_captions(corpus: dict, candidates: dict):
     return score_per_caption, message, eval_metric
 
 
-def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None):
+def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None, finetune=False):
     print_log(f"[VALIDATION] Start validating epoch {epoch}", logger = logger)
     base_model.eval()  # set model to eval mode
     
-    # Prepare ground truth for eval
-    scanqa_anno = test_dataloader.dataset.scanqa_anno
-    scanqa_corpus = {
-        '-'.join((anno['question_id'], anno['question'])): anno['answers'] \
-            for anno in scanqa_anno
-    }
-    object_caption_anno = test_dataloader.dataset.object_caption_anno
-    object_caption_corpus = {
-        '-'.join((anno['scene_id'], anno['object_id'])): anno['answers'] \
-            for anno in object_caption_anno
-    }
-    scene_caption_anno = test_dataloader.dataset.scene_caption_anno
-    scene_caption_corpus = {
-        anno['scene_id']: anno['answers'] \
-            for anno in scene_caption_anno
-    }
+    if not finetune:
+        candidates = {}
+        test_pbar = tqdm(total = len(test_dataloader))
+        with torch.no_grad():
+            for idx, data_dict in enumerate(test_dataloader):
+                test_pbar.update(1)
+                
+                for k,v in data_dict.items():
+                    if isinstance(v, torch.Tensor):
+                        data_dict[k] = v.cuda()
+                
+                output_ids = base_model(data_dict, eval=True)
+                
+                outputs = dict(
+                    output_ids=output_ids,
+                )
+                
+                outputs = all_gather_dict(outputs)
+                data_dict = all_gather_dict(data_dict)
+                # Flatten 2d list to 1d
+                for k,v in data_dict.items():
+                    if isinstance(v, list):
+                        data_dict[k] = [item for sublist in zip(*v) for item in sublist]
+                
+                output_ids = outputs["output_ids"]  # batch x max_length
+                answers = base_model.module.tokenizer.batch_decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )
+                
+                for idx in range(output_ids.shape[0]):
+                    key = data_dict['episode_id'][idx]
+                    task_name = data_dict['task_name'][idx]
+                    answer = answers[idx]
+                    answer = ' '.join(filter(lambda w: w, answer.split(' ')))
+                    if not key in candidates:
+                        candidates[key] = {key: [answer]}
+                    else:
+                        candidates[task_name][key] = [answer]
+                
+                barrier()
+                
+            for k, v in candidates.items():
+                corpus = test_dataloader.dataset.corpus[k]
+                corpus = {
+                    cor['episode_id']: cor['anno']['utterance'] \
+                        for cor in corpus
+                }
+                score_per_caption, message, eval_metric = score_captions(
+                    OrderedDict([(key, corpus[key]) for key in v]), v
+                )
+            
+                if is_primary():
+                    print_log(f"\n----------------------Evaluation {k}-----------------------\n")
+                    print_log(message)
+                    _log_to_disk(args, message, corpus, v, score_per_caption, k, epoch)
+                
+            if args.distributed:
+                torch.cuda.synchronize()
     
-    candidates = {
-        'scanqa': {},
-        'object_caption': {},
-        'scene_caption': {}
-    }
-    
-    test_pbar = tqdm(total = len(test_dataloader))
-    with torch.no_grad():
-        for idx, data_dict in enumerate(test_dataloader):
-            test_pbar.update(1)
-            
-            for k,v in data_dict.items():
-                if isinstance(v, torch.Tensor):
-                    data_dict[k] = v.cuda()
-            
-            output_ids = base_model(data_dict, eval=True)
-            
-            outputs = dict(
-                output_ids=output_ids,
-            )
-            
-            outputs = all_gather_dict(outputs)
-            data_dict = all_gather_dict(data_dict)
-            # Flatten 2d list to 1d
-            for k,v in data_dict.items():
-                if isinstance(v, list):
-                    data_dict[k] = [item for sublist in zip(*v) for item in sublist]
-            
-            output_ids = outputs["output_ids"]  # batch x max_length
-            answers = base_model.module.tokenizer.batch_decode(
-                output_ids,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False
-            )
-            
-            
-            for idx in range(output_ids.shape[0]):
-                key = data_dict['unique_key'][idx]
-                task_name = data_dict['task_name'][idx]
-                answer = answers[idx]
-                answer = ' '.join(filter(lambda w: w, answer.split(' ')))
-                candidates[task_name][key] = [answer]
-            
-            barrier()
-
-        torch.save({'candidates':candidates,
-                    'scanqa_corpus':scanqa_corpus,
-                    'object_caption_corpus':object_caption_corpus,
-                    'scene_caption_corpus':scene_caption_corpus}, f'{args.experiment_path}_{args.exp_name}_validation_{epoch}.pth')
-        print_log("Save all validation datas")
-
-        # end of forward pass traversion
-        qa_score_per_caption, qa_message, qa_eval_metric = score_captions(
-            OrderedDict([(key, scanqa_corpus[key]) for key in candidates['scanqa']]), candidates['scanqa']
-        )
-        oc_score_per_caption, oc_message, oc_eval_metric = score_captions(
-            OrderedDict([(key, object_caption_corpus[key]) for key in candidates['object_caption']]), candidates['object_caption']
-        )
-        sc_score_per_caption, sc_message, sc_eval_metric = score_captions(
-            OrderedDict([(key, scene_caption_corpus[key]) for key in candidates['scene_caption']]), candidates['scene_caption']
-        )
+    '''            
+    else:
+        # Prepare ground truth for eval
+        scanqa_anno = test_dataloader.dataset.scanqa_anno
+        scanqa_corpus = {
+            '-'.join((anno['question_id'], anno['question'])): anno['answers'] \
+                for anno in scanqa_anno
+        }
+        object_caption_anno = test_dataloader.dataset.object_caption_anno
+        object_caption_corpus = {
+            '-'.join((anno['scene_id'], anno['object_id'])): anno['answers'] \
+                for anno in object_caption_anno
+        }
+        scene_caption_anno = test_dataloader.dataset.scene_caption_anno
+        scene_caption_corpus = {
+            anno['scene_id']: anno['answers'] \
+                for anno in scene_caption_anno
+        }
         
-        if is_primary():
-            print_log("\n----------------------Evaluation QA-----------------------\n")
-            print_log(qa_message)
-            # print_log("\n----------------------Evaluation OC-----------------------\n")
-            # print_log(oc_message)
-            print_log("\n----------------------Evaluation SC-----------------------\n")
-            print_log(sc_message)
+        candidates = {
+            'scanqa': {},
+            'object_caption': {},
+            'scene_caption': {}
+        }
+        
+        test_pbar = tqdm(total = len(test_dataloader))
+        with torch.no_grad():
+            for idx, data_dict in enumerate(test_dataloader):
+                test_pbar.update(1)
+                
+                for k,v in data_dict.items():
+                    if isinstance(v, torch.Tensor):
+                        data_dict[k] = v.cuda()
+                
+                output_ids = base_model(data_dict, eval=True)
+                
+                outputs = dict(
+                    output_ids=output_ids,
+                )
+                
+                outputs = all_gather_dict(outputs)
+                data_dict = all_gather_dict(data_dict)
+                # Flatten 2d list to 1d
+                for k,v in data_dict.items():
+                    if isinstance(v, list):
+                        data_dict[k] = [item for sublist in zip(*v) for item in sublist]
+                
+                output_ids = outputs["output_ids"]  # batch x max_length
+                answers = base_model.module.tokenizer.batch_decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )
+                
+                
+                for idx in range(output_ids.shape[0]):
+                    key = data_dict['unique_key'][idx]
+                    task_name = data_dict['task_name'][idx]
+                    answer = answers[idx]
+                    answer = ' '.join(filter(lambda w: w, answer.split(' ')))
+                    candidates[task_name][key] = [answer]
+                
+                barrier()
 
-            _log_to_disk(args, qa_message, scanqa_corpus, candidates['scanqa'], qa_score_per_caption, 'scanqa')
-            _log_to_disk(args, oc_message, object_caption_corpus, candidates['object_caption'], oc_score_per_caption, 'object_caption')
-            _log_to_disk(args, sc_message, scene_caption_corpus, candidates['scene_caption'], sc_score_per_caption, 'scene_caption')
+            torch.save({'candidates':candidates,
+                        'scanqa_corpus':scanqa_corpus,
+                        'object_caption_corpus':object_caption_corpus,
+                        'scene_caption_corpus':scene_caption_corpus}, f'{args.experiment_path}_{args.exp_name}_validation_{epoch}.pth')
+            print_log("Save all validation datas")
+
+            # end of forward pass traversion
+            qa_score_per_caption, qa_message, qa_eval_metric = score_captions(
+                OrderedDict([(key, scanqa_corpus[key]) for key in candidates['scanqa']]), candidates['scanqa']
+            )
+            oc_score_per_caption, oc_message, oc_eval_metric = score_captions(
+                OrderedDict([(key, object_caption_corpus[key]) for key in candidates['object_caption']]), candidates['object_caption']
+            )
+            sc_score_per_caption, sc_message, sc_eval_metric = score_captions(
+                OrderedDict([(key, scene_caption_corpus[key]) for key in candidates['scene_caption']]), candidates['scene_caption']
+            )
             
-        if args.distributed:
-            torch.cuda.synchronize()
+            if is_primary():
+                print_log("\n----------------------Evaluation QA-----------------------\n")
+                print_log(qa_message)
+                # print_log("\n----------------------Evaluation OC-----------------------\n")
+                # print_log(oc_message)
+                print_log("\n----------------------Evaluation SC-----------------------\n")
+                print_log(sc_message)
 
-    # Add testing results to TensorBoard
-    if val_writer is not None:
-        val_writer.add_scalar('Metric/QA', qa_score_per_caption['cider'], epoch)
-        val_writer.add_scalar('Metric/OC', oc_score_per_caption['cider'], epoch)
-        val_writer.add_scalar('Metric/SC', sc_score_per_caption['cider'], epoch)
+                _log_to_disk(args, qa_message, scanqa_corpus, candidates['scanqa'], qa_score_per_caption, 'scanqa')
+                _log_to_disk(args, oc_message, object_caption_corpus, candidates['object_caption'], oc_score_per_caption, 'object_caption')
+                _log_to_disk(args, sc_message, scene_caption_corpus, candidates['scene_caption'], sc_score_per_caption, 'scene_caption')
+                
+            if args.distributed:
+                torch.cuda.synchronize()
 
+        # Add testing results to TensorBoard
+        if val_writer is not None:
+            val_writer.add_scalar('Metric/QA', qa_score_per_caption['cider'], epoch)
+            val_writer.add_scalar('Metric/OC', oc_score_per_caption['cider'], epoch)
+            val_writer.add_scalar('Metric/SC', sc_score_per_caption['cider'], epoch)
+        '''
+        
     return Acc_Metric(0.)
 
 
 
-def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name):
-    with open(os.path.join(args.experiment_path, f"{task_name}_qa_scores.json"), "w") as f: 
+def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name, epoch):
+    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_scores.json"), "w") as f: 
                 json.dump(message, f)
             
-    with open(os.path.join(args.experiment_path, f"{task_name}_qa_corpus_val.json"), "w") as f: 
+    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_corpus_val.json"), "w") as f: 
         json.dump(corpus, f, indent=4)
     
-    with open(os.path.join(args.experiment_path, f"{task_name}_qa_pred_val.json"), "w") as f:
+    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_pred_val.json"), "w") as f:
         json.dump(candidates, f, indent=4)
     
-    with open(os.path.join(args.experiment_path, f"{task_name}_qa_pred_gt_val.json"), "w") as f:
+    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_pred_gt_val.json"), "w") as f:
         pred_gt_val = {}
         for scene_object_id, scene_object_id_key in enumerate(candidates):
             pred_gt_val[scene_object_id_key] = {

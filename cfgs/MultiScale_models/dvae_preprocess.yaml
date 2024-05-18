@@ -41,7 +41,7 @@ model : {
   decoder_dims: 256, 
 }
 
-total_bs : 24
+total_bs : 7
 step_per_update : 1
 max_epoch : 300
 

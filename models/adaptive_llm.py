@@ -138,7 +138,7 @@ class AdaptiveLLM(nn.Module):
             caption_config = {
             'early_stopping': True,
             'eos_token_id': self.tokenizer.eos_token_id,
-            'num_beams': 4 
+            'num_beams': None
             }
             
             # attentions = [None] * vision_embed.shape[0]

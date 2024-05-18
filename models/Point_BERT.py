@@ -550,10 +550,7 @@ class Point_BERT(nn.Module):
         if not kwargs.get('num_group') is None:
             self.group_divider.num_group = kwargs['num_group']
             self.group_divider.group_size = kwargs['group_size']
-            
-        if not kwargs.get('forward_encoder') is None:
-            return self.forward_encoder(pts)  
-        elif noaug:
+        if noaug:
             return self.forward_eval(pts)
         else:
             # divide the point cloud in the same form. This is important

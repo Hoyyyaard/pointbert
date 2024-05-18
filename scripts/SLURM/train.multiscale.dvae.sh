@@ -53,6 +53,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main.py \
     --launcher slurm --sync_bn \
     --config cfgs/MultiScale_models/dvae.yaml \
-    --exp_name multiscale_dvae_wlevelmlp \
-    # --resume  
+    --exp_name 0518_Multiscale_Dvae_Wlevelmlp \
+    --resume  
 
