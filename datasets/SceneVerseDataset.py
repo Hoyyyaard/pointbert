@@ -16,6 +16,82 @@ import copy
 import json
 from transformers import AutoTokenizer
 
+TASK_PROMPT = {
+    'object_caption': [
+        '### human: describe this object in the 3D scene. ### assistant:',
+        '### human: provide a brief description of the given 3D object. ### assistant:',
+        '### human: offer a succinct explanation of the 3D object presented. ### assistant:',
+        '### human: give a short and clear explanation of the 3D object. ### assistant:',
+        '### human: describe the characteristics of this object in the 3D scene. ### assistant:',
+        '### human: give an overview of the object. ### assistant:'
+        '### human: explain the features of the object with given 3D context. ### assistant:'
+        '### human: provide a concise description of the object. ### assistant:'
+        '### human: detail the attributes of this object. ### assistant:'
+    ],
+    'scene_caption': [
+        '### human: describe the scene given 3D context. ### assistant:',
+        '### human: provide a description of the scene in the given 3D context. ### assistant:'
+        '### human: explain the details of the scene within the specified 3D context. ### assistant:'
+        '### human: offer an overview of the scene in the indicated 3D context. ### assistant:'
+        '### human: describe the features of the scene in the provided 3D context. ### assistant:'
+        '### human: detail the elements of the scene in the mentioned 3D context. ### assistant:'
+        '### human: give an explanation of the scene in the designated 3D context. ### assistant:'
+        '### human: summarize the scene in the described 3D context. ### assistant:'
+        '### human: illustrate the scene within the given 3D context. ### assistant:'
+        '### human: characterize the scene in the specific 3D context. ### assistant:'
+    ],
+    'relation_caption': [
+        '### human: describe the relationship between the objects gievn part of the 3D scene. ### assistant:',
+        '### human: describe how the objects are related in the specified part of the 3D scene. ### assistant:'
+        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene. ### assistant:'
+        '### human: offer an explanation of the relationship between the objects in the described part of the 3D scene. ### assistant:'
+        '### human: detail the interaction between the objects in the given segment of the 3D scene. ### assistant:'
+        '### human: illustrate the relationship between the objects within the specified part of the 3D scene. ### assistant:'
+        '### human: summarize the connection between the objects in the mentioned part of the 3D scene. ### assistant:'
+        '### human: characterize the relationship between the objects in the provided part of the 3D scene. ### assistant:'
+        '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:'
+        '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:'
+    ],
+    'object_grouding': [
+        '### human: locate the object in the 3D scene given the object description {caption}. ### assistant:',
+        '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:'
+        '### human: identify the object in the 3D scene based on the given description {caption}. ### assistant:'
+        '### human: pinpoint the object in the 3D scene from the described details {caption}. ### assistant:'
+        '### human: determine the location of the object in the 3D scene using the description {caption}. ### assistant:'
+        '### human: locate the object within the 3D scene according to the description {caption}. ### assistant:'
+        '### human: ascertain the position of the object in the 3D scene given the description {caption}. ### assistant:'
+        '### human: find the position of the object in the 3D scene using the details provided {caption}. ### assistant:'
+        '### human: spot the object in the 3D scene based on the description {caption}. ### assistant:'
+        '### human: seek out the object in the 3D scene from the given details {caption}. ### assistant:'
+        '### human: identify where the object is located in the 3D scene using the description {caption}. ### assistant:'
+    ],
+    'scene_grouding':[
+        '### human: locate all objects given the 3D scene. ### assistant:',
+        '### human: identify all objects in the given 3D scene. ### assistant:'
+        '### human: find every object in the provided 3D scene. ### assistant:'
+        '### human: list all objects present in the specified 3D scene. ### assistant:'
+        '### human: pinpoint each object in the given 3D scene. ### assistant:'
+        '### human: locate every object in the described 3D scene. ### assistant:'
+        '### human: determine the location of all objects in the provided 3D scene. ### assistant:'
+        '### human: identify the position of each object in the given 3D scene. ### assistant:'
+        '### human: find and list all objects in the specified 3D scene. ### assistant:'
+        '### human: recognize all objects within the given 3D scene. ### assistant:'
+        '### human: enumerate every object in the provided 3D scene. ### assistant:'
+    ],
+    'object_caption_given_bbox':[
+        '### human: describe the object in the 3D scene given the object bounding box {bbox}. ### assistant:',
+        '### human: provide a description of the object in the 3D scene using the given bounding box {bbox}. ### assistant:'
+        '### human: describe the object within the 3D scene based on the provided bounding box {bbox}. ### assistant:'
+        '### human: explain the features of the object in the 3D scene given its bounding box {bbox}. ### assistant:'
+        '### human: detail the characteristics of the object in the 3D scene using the bounding box {bbox}. ### assistant:'
+        '### human: offer a description of the object in the 3D scene from the given bounding box {bbox}. ### assistant:'
+        '### human: summarize the attributes of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:'
+        '### human: characterize the object in the 3D scene based on its bounding box {bbox}. ### assistant:'
+        '### human: give an overview of the object in the 3D scene using the bounding box information {bbox}. ### assistant:'
+        '### human: identify the features of the object in the 3D scene given the bounding box {bbox}. ### assistant:'
+        '### human: outline the details of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:'
+    ]
+}
 
 @DATASETS.register_module()
 class Objaverse(Dataset):
@@ -104,15 +180,33 @@ class SceneVerseDataset(Dataset):
             self._instance_num_groups = config.INSTANCE_NUM_GROUP
             self._load_objaverse_data()
             
+            # Augment the scene data using shift and rotation
+            self._all_scans_datasets = self._all_scans_datasets * 10
+            self._all_region = self._all_region[:100000]
             if config.subset == 'train':
-                self._all_scans_datasets = self._all_scans_datasets[:-1000]
+                self._all_scans_datasets = self._all_scans_datasets[:-10000]
                 self._all_region = self._all_region[:-10000]
-                self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[:200000]
+                self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[:100000]
             else:
-                self._all_scans_datasets = self._all_scans_datasets[-1000:]
+                self._all_scans_datasets = self._all_scans_datasets[-10000:]
                 self._all_region = self._all_region[-10000:]
                 self.objaverse_data.obj_ids = self.objaverse_data.obj_ids[-10000:]           
-
+            
+            
+            # self.order_episodes = []
+            # self.order_levels = []
+            # self.order_episodes.extend(self._all_scans_datasets)
+            # self.order_levels.extend(['scene'] * len(self._all_scans_datasets))
+            # self.order_episodes.extend(self._all_region)
+            # self.order_levels.extend(['region'] * len(self._all_region))
+            # self.order_episodes.extend(self.objaverse_data.obj_ids)
+            # self.order_levels.extend(['instance'] * len(self.objaverse_data.obj_ids))          
+            # new_order_episodes = []
+            # for lev, ep in zip(self.order_levels, self.order_episodes):
+            #     new_order_episodes.append((ep, lev))
+            # self.order_episodes = new_order_episodes
+            
+        
             # As diffent dataset has different number of points, we need to specify the dataset squence order 
             # to make sure samples from on batch come from the same level dataset
             batch_size_pre_rank = config.tbs
@@ -121,6 +215,9 @@ class SceneVerseDataset(Dataset):
             random.shuffle(self._all_scans_datasets)
             random.shuffle(self._all_region)
             random.shuffle(self.objaverse_data.obj_ids)
+            dist.broadcast_object_list(self._all_scans_datasets, src=0)
+            dist.broadcast_object_list(self._all_region, src=0)
+            dist.broadcast_object_list(self.objaverse_data.obj_ids, src=0)
             while self._all_region or self._all_scans_datasets or self.objaverse_data.obj_ids:
                 if self._all_scans_datasets:
                     if len(self._all_scans_datasets) < batch_size_pre_rank:
@@ -143,6 +240,7 @@ class SceneVerseDataset(Dataset):
                     else:
                         self.order_episodes.extend([self.objaverse_data.obj_ids.pop(0) for _ in range(batch_size_pre_rank)])
                         self.order_levels.extend(['instance'] * batch_size_pre_rank)
+            
             print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded', logger = 'SceneVerse')
             
     def _load_objaverse_data(self):
@@ -205,15 +303,41 @@ class SceneVerseDataset(Dataset):
     
     def __len__(self):
         return len(self.order_episodes)
-        
+
+    def _padding_pointcloud(self, points):
+        PAD_DATA_NUM = 40000
+        pad_num = PAD_DATA_NUM - points.shape[0]
+        if pad_num > 0:
+            pad_points = np.ones((pad_num, 3))*(-100)
+            points = np.concatenate([points, pad_points], axis=0)
+        return points
+    
+    def _rotz(self, t):
+        """Rotation about the z-axis."""
+        c = np.cos(t)
+        s = np.sin(t)
+        return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    
     def __getitem__(self, index):
         
         level = self.order_levels[index]
         data = self.order_episodes[index]
+        
         if level == 'scene':
             dataset_name, scan_name = data
             points, colors, _, instance_labels, inst_to_label = self._load_scan_data(scan_name, dataset_name)
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
+            if np.random.random() > 0.5:
+                # Flipping along the YZ plane
+                points[:, 0] = -1 * points[:, 0]
+            if np.random.random() > 0.5:
+                # Flipping along the XZ plane
+                points[:, 1] = -1 * points[:, 1]
+
+            # Rotation along up-axis/Z-axis
+            rot_angle = (np.random.random() * np.pi / 18) - np.pi / 36  # -5 ~ +5 degree
+            rot_mat = self._rotz(rot_angle)
+            points = np.dot(points, np.transpose(rot_mat))
             points = self.pc_norm(points)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
         elif level == 'region':
@@ -223,6 +347,7 @@ class SceneVerseDataset(Dataset):
             points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             points = self.pc_norm(points)
+            # points = self._padding_pointcloud(points)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
         elif level == 'instance':
             obj_pcd = self.objaverse_data.load_obj_pcd(data)
@@ -230,35 +355,10 @@ class SceneVerseDataset(Dataset):
             colors = obj_pcd[:, 3:]
             points, colors, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
             points = self.pc_norm(points)
+            # points = self._padding_pointcloud(points)
             return f'{data}@object', 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
             
-            
 
-
-    # def _get_inflate_axis_aligned_bounding_box(pcs, remaining_pcd, scale=scale, ):
-    #     '''
-    #         pcs & remaining_pcd : [N*3]
-    #     '''
-    #     import open3d
-    #     tmp_pc = open3d.geometry.PointCloud()
-    #     tmp_pc.points = open3d.utility.Vector3dVector(pcs)
-    #     bbox = tmp_pc.get_axis_aligned_bounding_box()
-    #     # 扩大边界框的尺寸n倍
-    #     center = bbox.get_center()
-    #     bbox.scale(scale, center)
-    #     # 获取扩大后的边界框的最小和最大坐标
-    #     min_bound = bbox.get_min_bound()
-    #     max_bound = bbox.get_max_bound()
-    #     # TODO: 这里的高度边界应该选择整个场景的边界
-    #     min_bound[-1] = raw_point_cloud_dims_min[-1]
-    #     max_bound[-1] = raw_point_cloud_dims_max[-1]
-    #     # 选择边界框内的余下点云的点
-    #     indices_within_bbox = []
-    #     for i, point in enumerate(remaining_pcd):
-    #         if np.all(min_bound <= point) and np.all(point <= max_bound):
-    #             indices_within_bbox.append(i)
-    #     return indices_within_bbox
-    
     
 @DATASETS.register_module()
 class RegionVerseDataset(SceneVerseDataset):
