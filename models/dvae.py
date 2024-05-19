@@ -160,6 +160,12 @@ class Group(nn.Module):
             output: B G M 3
             center : B G 3
         '''
+        B, N, C = xyz.shape
+        if C > 3:
+            data = xyz
+            xyz = data[:,:,:3].contiguous()
+            rgb = data[:, :, 3:].contiguous()
+        
         batch_size, num_points, _ = xyz.shape
         # fps the centers out
         center = misc.fps(xyz, self.num_group) # B G 3
@@ -171,10 +177,18 @@ class Group(nn.Module):
         idx_base = torch.arange(0, batch_size, device=xyz.device).view(-1, 1, 1) * num_points
         idx = idx + idx_base
         idx = idx.view(-1)
-        neighborhood = xyz.view(batch_size * num_points, -1)[idx, :]
-        neighborhood = neighborhood.view(batch_size, self.num_group, self.group_size, 3).contiguous()
+        
+        neighborhood_xyz = xyz.view(batch_size * num_points, -1)[idx, :]
+        neighborhood_xyz = neighborhood_xyz.view(batch_size, self.num_group, self.group_size, 3).contiguous()
+        if C > 3:
+            neighborhood_rgb = rgb.view(batch_size * num_points, -1)[idx, :]
+            neighborhood_rgb = neighborhood_rgb.view(batch_size, self.num_group, self.group_size, -1).contiguous()
         # normalize
-        neighborhood = neighborhood - center.unsqueeze(2)
+        neighborhood_xyz = neighborhood_xyz - center.unsqueeze(2)
+        if C > 3:
+            neighborhood = torch.cat((neighborhood_xyz, neighborhood_rgb), dim=-1)
+        else:
+            neighborhood = neighborhood_xyz
         return neighborhood, center
 
 class Encoder(nn.Module):
@@ -182,7 +196,7 @@ class Encoder(nn.Module):
         super().__init__()
         self.encoder_channel = encoder_channel
         self.first_conv = nn.Sequential(
-            nn.Conv1d(3, 128, 1),
+            nn.Conv1d(6, 128, 1),
             nn.BatchNorm1d(128),
             nn.ReLU(inplace=True),
             nn.Conv1d(128, 256, 1)
@@ -199,8 +213,8 @@ class Encoder(nn.Module):
             -----------------
             feature_global : B G C
         '''
-        bs, g, n , _ = point_groups.shape
-        point_groups = point_groups.reshape(bs * g, n, 3)
+        bs, g, n , c = point_groups.shape
+        point_groups = point_groups.reshape(bs * g, n, c)
         # encoder
         feature = self.first_conv(point_groups.transpose(2,1))  # BG 256 n
         feature_global = torch.max(feature,dim=2,keepdim=True)[0]  # BG 256 1

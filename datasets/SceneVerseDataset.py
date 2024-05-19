@@ -339,6 +339,8 @@ class SceneVerseDataset(Dataset):
             rot_mat = _rotz(rot_angle)
             points = np.dot(points, np.transpose(rot_mat))
             points = self.pc_norm(points)
+            # concat color
+            points = np.concatenate([points, colors], axis=1)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
         elif level == 'region':
             region_data = np.load(os.path.join('data/SceneVerse/RegionAugData', data))
@@ -348,6 +350,8 @@ class SceneVerseDataset(Dataset):
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             points = self.pc_norm(points)
             # points = self._padding_pointcloud(points)
+            # concat color
+            points = np.concatenate([points, colors], axis=1)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
         elif level == 'instance':
             obj_pcd = self.objaverse_data.load_obj_pcd(data)
@@ -356,6 +360,8 @@ class SceneVerseDataset(Dataset):
             points, colors, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
             points = self.pc_norm(points)
             # points = self._padding_pointcloud(points)
+            # concat color
+            points = np.concatenate([points, colors], axis=1)
             return f'{data}@object', 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
             
 
