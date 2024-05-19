@@ -341,21 +341,22 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                 )
                 
                 for idx in range(output_ids.shape[0]):
-                    key = data_dict['episode_id'][idx]
+                    key = data_dict['episode_id'][idx].item()
                     task_name = data_dict['task_name'][idx]
                     answer = answers[idx]
                     answer = ' '.join(filter(lambda w: w, answer.split(' ')))
-                    if not key in candidates:
-                        candidates[key] = {key: [answer]}
+                    if not task_name in candidates:
+                        candidates[task_name] = {key: [answer]}
                     else:
                         candidates[task_name][key] = [answer]
                 
                 barrier()
+                # break
                 
             for k, v in candidates.items():
                 corpus = test_dataloader.dataset.corpus[k]
                 corpus = {
-                    cor['episode_id']: cor['anno']['utterance'] \
+                    cor['episode_id']: [cor['anno']['utterance']] \
                         for cor in corpus
                 }
                 score_per_caption, message, eval_metric = score_captions(
@@ -478,16 +479,16 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
 
 
 def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name, epoch):
-    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_scores.json"), "w") as f: 
+    with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_scores.json"), "w") as f: 
                 json.dump(message, f)
             
-    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_corpus_val.json"), "w") as f: 
+    with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_corpus_val.json"), "w") as f: 
         json.dump(corpus, f, indent=4)
     
-    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_pred_val.json"), "w") as f:
+    with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_pred_val.json"), "w") as f:
         json.dump(candidates, f, indent=4)
     
-    with open(os.path.join(args.experiment_path, args.experiment_path, f"{task_name}_{epoch}_qa_pred_gt_val.json"), "w") as f:
+    with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_pred_gt_val.json"), "w") as f:
         pred_gt_val = {}
         for scene_object_id, scene_object_id_key in enumerate(candidates):
             pred_gt_val[scene_object_id_key] = {

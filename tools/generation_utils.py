@@ -10,8 +10,6 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
     max_length = kwargs['max_length']
     inputs_embeds = kwargs['inputs_embeds'] # batch x nwords x channel
     
-    ll3da_opt_attn_output = kwargs.get('ll3da_opt_attn_output', False)
-    
     batch, _, channel = inputs_embeds.shape
     
     ## prepare storage
@@ -27,7 +25,6 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         step_output = transformer(
             inputs_embeds=temporal_inputs,
             output_attentions=True,
-            flex_attn_info=kwargs['flex_attn_info']
         )
         
         ## greedy decoding, find out whats the most possible word

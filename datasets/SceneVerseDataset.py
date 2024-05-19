@@ -725,9 +725,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         random.shuffle(self.all_object_caption)
         
         # Debug
-        # dist.broadcast_object_list(self.all_scene_caption, src=0)
-        # dist.broadcast_object_list(self.all_relation_caption, src=0)
-        # dist.broadcast_object_list(self.all_object_caption, src=0)
+        dist.broadcast_object_list(self.all_scene_caption, src=0)
+        dist.broadcast_object_list(self.all_relation_caption, src=0)
+        dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
             self.all_scene_caption = self.all_scene_caption[:-2000]
@@ -753,6 +753,13 @@ class SceneVerseLLMPretrainDataset(Dataset):
         for data in self.all_object_caption:
             data['episode_id'] = episode_id
             episode_id += 1
+        
+        # Prepare corpus for evaluation
+        self.corpus = {
+            'scene_caption': copy.deepcopy(self.all_scene_caption),
+            'object_caption': copy.deepcopy(self.all_object_caption),
+            'region_caption': copy.deepcopy(self.all_relation_caption)
+        }
         
         # As diffent dataset has different number of points, we need to specify the dataset squence order 
         # to make sure samples from on batch come from the same level dataset
@@ -784,12 +791,6 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     self.order_levels.extend(['instance'] * batch_size_pre_rank)
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
-        # Prepare corpus for evaluation
-        self.corpus = {
-            'scene_caption': self.all_scene_caption,
-            'object_caption': self.all_object_caption,
-            'region_caption': self.all_relation_caption
-        }
         
         
     def _load_annotation(self, annotation_path):
