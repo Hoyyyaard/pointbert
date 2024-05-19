@@ -10,7 +10,7 @@ optimizer : {
 scheduler: {
   type: CosLR,
   kwargs: {
-    epochs: 1,
+    epochs: 5,
     initial_epochs : 0
 }}
 

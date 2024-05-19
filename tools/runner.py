@@ -146,8 +146,8 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
 
             ret = base_model(points, temperature = temp, hard = False, num_group=num_group, group_size=group_size, level=level)
-
-            loss_1, loss_2 = base_model.module.get_loss(ret, points)
+            
+            loss_1, loss_2 = base_model.module.get_loss(ret, points[:,:,:3].contiguous())
 
             _loss = compute_loss(loss_1, loss_2, config, n_itr, train_writer)
 
@@ -254,6 +254,9 @@ def validate(base_model, test_dataloader, epoch, ChamferDisL1, ChamferDisL2, val
             ret = base_model(inp = points, hard=True, eval=True, num_group=num_group, group_size=group_size, level=level)
             coarse_points = ret[0]
             dense_points = ret[1]
+            
+            # Get xyz instead of xyzrgb
+            points = points[:, :, :3]
 
             sparse_loss_l1 =  ChamferDisL1(coarse_points, points)
             sparse_loss_l2 =  ChamferDisL2(coarse_points, points)
@@ -396,7 +399,7 @@ def test(base_model, test_dataloader, args, config, logger = None):
 
             print(taxonomy_ids)
             
-            ret = base_model(inp = points, hard=True, eval=True, group_size=group_size, num_group=num_group, level=level)
+            ret = base_model(inp = points[:, :,:3].contiguous(), hard=True, eval=True, group_size=group_size, num_group=num_group, level=level)
             dense_points = ret[1]
 
             final_image = []
@@ -407,7 +410,8 @@ def test(base_model, test_dataloader, args, config, logger = None):
 
             points = points.squeeze().detach().cpu().numpy()
             
-            visualization_pointclouds(points)
+            visualization_pointclouds(points[:,:3])
+            points = points[:, :3]
             
             np.savetxt(os.path.join(data_path,'gt.txt'), points, delimiter=';')
             points = misc.get_ptcloud_img(points)

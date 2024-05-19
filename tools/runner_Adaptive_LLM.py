@@ -176,6 +176,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
             loss = base_model(data_dict)
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=10, norm_type=2)
 
             # forward
             if num_iter == config.step_per_update:

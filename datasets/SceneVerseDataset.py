@@ -52,6 +52,18 @@ TASK_PROMPT = {
         '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:'
         '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:'
     ],
+    'region_caption_with_bbox': [
+        '### human: describe the relationship between the objects gievn part of the 3D scene and output the location of these objects. ### assistant:',
+        '### human: describe how the objects are related in the specified part of the 3D scene and point out these object in the scene. ### assistant:'
+        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene and locate them. ### assistant:'
+        '### human: offer an explanation of the relationship between the objects you located in the described part of the 3D scene. ### assistant:'
+        '### human: detail the interaction between the objects in the given segment of the 3D scene and output the location of these objects. ### assistant:'
+        '### human: find the position of the object and illustrate their relationship between them within the specified part of the 3D scene. ### assistant:'
+        '### human: summarize the connection between the objects in the mentioned part of the 3D scene and point out these location. ### assistant:'
+        '### human: characterize the relationship between the objects in the provided part of the 3D scene and output the location of these objects. ### assistant:'
+        '### human: outline the relationship between the objects in the designated part of the 3D scene and output the location of these objects. ### assistant:'
+        '### human: depict the interaction between the objects in the stated part of the 3D scene and output the location of these objects. ### assistant:'
+    ],
     'object_grouding': [
         '### human: locate the object in the 3D scene given the object description {caption}. ### assistant:',
         '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:'
@@ -221,9 +233,10 @@ class SceneVerseDataset(Dataset):
             random.shuffle(self._all_scans_datasets)
             random.shuffle(self._all_region)
             random.shuffle(self.objaverse_data.obj_ids)
-            dist.broadcast_object_list(self._all_scans_datasets, src=0)
-            dist.broadcast_object_list(self._all_region, src=0)
-            dist.broadcast_object_list(self.objaverse_data.obj_ids, src=0)
+            if dist.is_initialized():
+                dist.broadcast_object_list(self._all_scans_datasets, src=0)
+                dist.broadcast_object_list(self._all_region, src=0)
+                dist.broadcast_object_list(self.objaverse_data.obj_ids, src=0)
             while self._all_region or self._all_scans_datasets or self.objaverse_data.obj_ids:
                 if self._all_scans_datasets:
                     if len(self._all_scans_datasets) < batch_size_pre_rank:
@@ -340,7 +353,7 @@ class SceneVerseDataset(Dataset):
             points = np.dot(points, np.transpose(rot_mat))
             points = self.pc_norm(points)
             # concat color
-            points = np.concatenate([points, colors], axis=1)
+            points = np.concatenate([points, colors/255], axis=1)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._num_groups, self._group_size)
         elif level == 'region':
             region_data = np.load(os.path.join('data/SceneVerse/RegionAugData', data))
@@ -351,7 +364,7 @@ class SceneVerseDataset(Dataset):
             points = self.pc_norm(points)
             # points = self._padding_pointcloud(points)
             # concat color
-            points = np.concatenate([points, colors], axis=1)
+            points = np.concatenate([points, colors/255], axis=1)
             return f'{scan_name}@{level}', dataset_name, (points.astype(np.float32), self._region_num_groups, self._region_group_size)
         elif level == 'instance':
             obj_pcd = self.objaverse_data.load_obj_pcd(data)
@@ -361,7 +374,7 @@ class SceneVerseDataset(Dataset):
             points = self.pc_norm(points)
             # points = self._padding_pointcloud(points)
             # concat color
-            points = np.concatenate([points, colors], axis=1)
+            points = np.concatenate([points, colors/255], axis=1)
             return f'{data}@object', 'Objaverse', (points.astype(np.float32), self._instance_num_groups, self._instance_group_size)
             
 
@@ -729,6 +742,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         random.shuffle(self.all_scene_caption)
         random.shuffle(self.all_relation_caption)
         random.shuffle(self.all_object_caption)
+        # Expand to balance data after shuffle to ensure train and val split have different data
+        if config.subset == 'train':
+            self.all_scene_caption = self.all_scene_caption * 2
         
         # Debug
         dist.broadcast_object_list(self.all_scene_caption, src=0)
@@ -1049,6 +1065,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 
                 points = self.pc_norm(points)
                 
+                # Concat xyz with rgb
+                points = np.concatenate([points, colors], 1)
+                
                 ret_dict = {
                     'points': points.astype(np.float32),
                     'colors': colors.astype(np.float32),
@@ -1090,6 +1109,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             points = self.pc_norm(points)
             
+            # Concat xyz with rgb
+            points = np.concatenate([points, colors], 1)
+            
             ret_dict = {
                 'points': points.astype(np.float32),
                 'colors': colors.astype(np.float32),
@@ -1101,9 +1123,6 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'task_name': task_name,
                 'episode_id': data['episode_id']
             }
-            
-            intruction = random.choice(TASK_PROMPT[task_name])
-            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']
             
@@ -1117,7 +1136,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                             if v == text and sum(instance_labels == int(k)) > 0 :
                                 bbox = self.instance_id_to_bbox_str(int(k), instance_labels, points)
                                 answers = answers[:pos + len(text)] + ' ' + bbox + ' ' + answers[pos + len(text):]
-
+                intruction = random.choice(TASK_PROMPT[f'{task_name}_with_bbox'])
+            else:
+                intruction = random.choice(TASK_PROMPT[task_name])
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            
             llm_inputs = self.tokenizer.batch_encode_plus(
             [' '.join((intruction, answers, self.tokenizer.eos_token))],
             **self.tokenizer_config
@@ -1152,6 +1175,10 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 instance_labels = instance_labels[instance_labels == instance_id]
                 points, colors, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
                 points = self.pc_norm(points)
+            
+            
+            # Concat xyz with rgb
+            points = np.concatenate([points, colors], 1)
             
             ret_dict = {
                 'points': points.astype(np.float32),
@@ -1189,6 +1216,17 @@ class SceneVerseLLMPretrainDataset(Dataset):
         
 @DATASETS.register_module()
 class SceneVerseLLMFinetuneDataset(Dataset):
+    '''
+        Downstream datasets
+            1. QA 
+                ScanQA & 3RScanQA(LEO) ~84k
+            2. Object QA
+                Object caption & Grouding object (SceneVerse) ~132k
+            3. Scene understanding
+                Scene caption ~1k & scene dia ~8k & embodied QA ~15k & embodied plan ~16k (3dllm) ~40k
+            4. Text
+                shareGPT ~40k
+    '''
     def __init__(self, config):
         super().__init__()
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
@@ -1199,7 +1237,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self._npoint = config.N_POINTS
         self._group_size = config.GROUP_SIZE
         self._num_groups = config.NUM_GROUP
-        _all_dataset_name = ['ScanNet']
+        _all_dataset_name = ['3RScan', 'HM3D', 'MultiScan', 'ARKitScenes', 'ScanNet']
         self._all_dataset_root = 'data/SceneVerse'
         self._all_scans = []
         self.dataset_names = []
@@ -1227,34 +1265,89 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         for dn, sc in zip(self.dataset_names, self._all_scans):
             self._all_scans_datasets.append((dn, sc))
             
-        # Finetune on the few tasks: ScanQA, Scannet scene caption, Scannet object caption
+        # Load part 1 task: QA
+        self.all_scene_qa = []
         self.scanqa_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/qa/ScanQA_v1.0_{config.subset}.json'))
-        self.object_caption_anno =  json.load(open(f'data/SceneVerse/ScanNet/annotations/object_caption/ScanRefer_filtered_{config.subset}_qa_format.json'))
-        if config.subset == 'train':
-            new_object_caption_anno = []
-            for obj_cap in self.object_caption_anno:
-                for ans in obj_cap['answers']:
-                    new_object_caption_anno.append({'scene_id':obj_cap['scene_id'], 'object_id':obj_cap['object_id'], 'answers':[ans], 'object_name':obj_cap['object_name']})
-            self.object_caption_anno = new_object_caption_anno
-        self.scene_caption_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/scene_caption/3d_llm_scene_description_{config.subset}.json'))
-        
-        self.all_scanqa = []
-        for scanqa in self.scanqa_anno:
-            scan_name = scanqa['scene_id']
-            self.all_scanqa.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":scanqa, "task_name": "scanqa"})
-        self.all_object_caption = []
-        for obj_cap in self.object_caption_anno:
-            scan_name = obj_cap['scene_id']
-            self.all_object_caption.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":obj_cap, "task_name": "object_caption"})
-        self.all_scene_caption = []
-        for scene_cap in self.scene_caption_anno:
+        for scene_cap in self.scanqa_anno:
             scan_name = scene_cap['scene_id']
-            self.all_scene_caption.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":scene_cap, "task_name": "scene_caption"})
-
-        print_log(f'[DATASET] {len(self.all_scanqa)} scene qa were loaded from scan data', logger = 'SceneVerse')
-        print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data', logger = 'SceneVerse')
-        print_log(f'[DATASET] {len(self.all_scene_caption)} scene captions were loaded from scan data', logger = 'SceneVerse')
+            self.all_scene_qa.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":scene_cap, "task_name": "scene_qa"})
         
+        ## Only in train
+        if config.subset == 'train':
+            self.rscanqa_anno = json.load(open(f'data/LEO_DATA/annotations/instruction/3rscanqa/3rscan_qa_{config.subset}.json'))
+            ## Transfer rscan qa format to scan qa format
+            tmp_rscanqa_anno = []
+            for scene_id, qas in self.rscanqa_anno.items():
+                for qa in qas['response']:
+                    tmp_rscanqa_anno.append({
+                        'scene_id': scene_id,
+                        'question': qa['Q'],
+                        'object_names': qa.get('T', 'None'),
+                        'answers': qa['A']
+                    })
+            self.rscanqa_anno = tmp_rscanqa_anno
+            for scene_cap in self.rscanqa_anno:
+                scan_name = scene_cap['scene_id']
+                self.all_scene_qa.append({'dataset_name':'3RScan', "scan_name":scan_name, "anno":scene_cap, "task_name": "scene_qa"})
+        
+        # Load part 2 task: object caption and object grounding from all scans of sceneverse
+        ## Note that we only keep the scannet part for eval
+        self.all_object_caption = []
+        object_caption_anno_name = 'ssg_obj_caption_gpt.json'
+        for dn in _all_dataset_name:
+            if dn == 'ScanNet':
+                tmp_object_caption = json.load(open(f'data/SceneVerse/ScanNet/annotations/object_caption/ScanRefer_filtered_{config.subset}_qa_format.json'))
+                for oc in tmp_object_caption:
+                    if config.subset == 'train':
+                        for ans in oc['answers']:
+                            scan_name = oc['scene_id']
+                            anno = {'scene_id':oc['scene_id'], 'object_id':oc['object_id'], 'answers':[ans], 'object_name':oc['object_name']}
+                            self.all_object_caption.append({'dataset_name':dn, "scan_name":scan_name, "anno":anno, "task_name": "object_caption"})
+                    ## In eval we hava multiple answers
+                    else:
+                        scan_name = oc['scene_id']
+                        self.all_object_caption.append({'dataset_name':dn, "scan_name":scan_name, "anno":oc, "task_name": "object_caption"})
+            ## As HM3D only contains annotations from template like 'the pointcloud of xxx'
+            elif config.subset == 'train' and not dn == 'HM3D':
+                tmp_object_caption = json.load(open(f'data/SceneVerse/{dn}/annotations/{object_caption_anno_name}'))
+                for oc in tmp_object_caption:
+                    scan_name = oc['scan_id']
+                    self.all_object_caption.append({'dataset_name':dn, "scan_name":scan_name, "anno":oc, "task_name": "object_caption"})
+        ## In train split we use object grouding
+        if config.subset == 'train':  
+            self.all_object_grouding = copy.deepcopy(self.all_object_caption)
+            for og in self.all_object_grouding:
+                og['task_name'] = 'object_grouding'
+        
+        # Load part 3 task: scene understanding from all scans of sceneverse
+        ## All in scene_id question answer format
+        self.all_scene_understanding = []
+        ## Only in train
+        if config.subset == 'train':
+            embodied_dialogue_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_dialogue_filtered_{config.subset}.json'))
+            for ed in embodied_dialogue_anno:
+                scan_name = ed['scene_id']
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ed, "task_name": "scene_understanding"})
+            embodied_planning_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_planning_filtered_{config.subset}.json'))
+            for ep in embodied_planning_anno:
+                scan_name = ep['scene_id']
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ep, "task_name": "scene_understanding"})
+            embodied_question_answer_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_question_answer_{config.subset}.json'))
+            for eqa in embodied_question_answer_anno:
+                scan_name = eqa['scene_id']
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":eqa, "task_name": "scene_understanding"})
+        scene_caption_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_scene_description_{config.subset}.json'))
+        for sc in scene_caption_anno:
+            scan_name = sc['scene_id']
+            self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":sc, "task_name": "scene_understanding"})
+
+
+        print_log(f'[DATASET] {len(self.all_scene_qa)} scene qa were loaded from scan data', logger = 'SceneVerse')
+        print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data', logger = 'SceneVerse')
+        print_log(f'[DATASET] {len(self.all_scene_understanding)} scene captions were loaded from scan data', logger = 'SceneVerse')
+        if hasattr(self, 'all_object_grouding'):
+            print_log(f'[DATASET] {len(self.all_object_grouding)} object grouding were loaded from scan data', logger = 'SceneVerse')
+    
         # Load region level data
         self._region_npoint = config.REGION_N_POINTS
         self._region_group_size = config.REGION_GROUP_SIZE
@@ -1266,11 +1359,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self._instance_num_groups = config.INSTANCE_NUM_GROUP
         
         self.order_episodes = []
-        self.order_episodes.extend(self.all_scanqa)
-        self.order_episodes.extend(self.all_scene_caption)
-        # TODO
-        # self.order_episodes.extend(self.all_object_caption)
-
+        self.order_episodes.extend(self.all_scene_qa)
+        self.order_episodes.extend(self.all_object_caption)
+        self.order_episodes.extend(self.all_scene_understanding)
+        if hasattr(self, 'all_object_grouding'):
+            self.order_episodes.extend(self.all_object_grouding)
+        
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
     

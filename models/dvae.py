@@ -338,7 +338,8 @@ class DiscreteVAE(nn.Module):
 
     def recon_loss(self, ret, gt):
         whole_coarse, whole_fine, coarse, fine, group_gt, _ = ret
-
+        group_gt = group_gt[..., :3]
+        
         bs, g, _, _ = coarse.shape
 
         coarse = coarse.reshape(bs*g, -1, 3).contiguous()

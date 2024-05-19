@@ -22,7 +22,7 @@ dataset : {
 model : {
   NAME: PointTransformer, 
 
-  quantization: False, 
+  quantization: True, 
 
   trans_dim: 384, 
   depth: 12, 
@@ -35,7 +35,7 @@ model : {
 }
 
 finetune : True
-total_bs : 1
+total_bs : 2
 step_per_update : 1
 max_epoch : 5
 
