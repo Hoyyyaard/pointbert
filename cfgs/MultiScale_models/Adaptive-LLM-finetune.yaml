@@ -16,9 +16,9 @@ scheduler: {
 
 dataset : {
   train : { _base_: cfgs/dataset_configs/SceneVerseLLMFinetuneDataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True}},
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: False}},
   val : { _base_: cfgs/dataset_configs/SceneVerseLLMFinetuneDataset.yaml, 
-            others: {subset: 'val'}}}
+            others: {subset: 'val', shuffle: False}}}
 model : {
   NAME: PointTransformer, 
 
@@ -36,7 +36,7 @@ model : {
 
 finetune : True
 total_bs : 2
-step_per_update : 1
+step_per_update : 2
 max_epoch : 5
 
 consider_metric: CDL1

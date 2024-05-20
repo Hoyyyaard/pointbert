@@ -64,8 +64,8 @@ def run_net(args, config, train_writer=None, val_writer=None):
     
     # parameter setting
     start_epoch = 0
-    best_metrics = Acc_Metric(0.)
-    metrics = Acc_Metric(0.)
+    best_metrics = Acc_Metric(-1e3)
+    metrics = Acc_Metric(-1e3)
 
     # resume ckpts
     if args.resume:
@@ -225,55 +225,67 @@ def validate(base_model, extra_train_dataloader, test_dataloader, epoch, val_wri
     train_label = []
     npoints = config.dataset.train.others.npoints
     with torch.no_grad():
-        for idx, (taxonomy_ids, model_ids, data) in enumerate(extra_train_dataloader):
-            points = data[0].cuda()
-            label = data[1].cuda()
+        # for idx, (taxonomy_ids, model_ids, data) in enumerate(extra_train_dataloader):
+        #     points = data[0].cuda()
+        #     label = data[1].cuda()
 
-            points = misc.fps(points, npoints)
+        #     points = misc.fps(points, npoints)
 
-            assert points.size(1) == npoints
-            feature = base_model(points, noaug=True)
-            target = label.view(-1)
+        #     assert points.size(1) == npoints
+        #     feature = base_model(points, noaug=True)
+        #     target = label.view(-1)
 
-            train_features.append(feature.detach())
-            train_label.append(target.detach())
+        #     train_features.append(feature.detach())
+        #     train_label.append(target.detach())
 
+        # for idx, (taxonomy_ids, model_ids, data) in enumerate(test_dataloader):
+        #     points = data[0].cuda()
+        #     label = data[1].cuda()
+
+        #     points = misc.fps(points, npoints)
+        #     assert points.size(1) == npoints
+        #     feature = base_model(points, noaug=True)
+        #     target = label.view(-1)
+
+        #     test_features.append(feature.detach())
+        #     test_label.append(target.detach())
+
+
+        # train_features = torch.cat(train_features, dim=0)
+        # train_label = torch.cat(train_label, dim=0)
+        # test_features = torch.cat(test_features, dim=0)
+        # test_label = torch.cat(test_label, dim=0)
+
+        # if args.distributed:
+        #     train_features = dist_utils.gather_tensor(train_features, args)
+        #     train_label = dist_utils.gather_tensor(train_label, args)
+        #     test_features = dist_utils.gather_tensor(test_features, args)
+        #     test_label = dist_utils.gather_tensor(test_label, args)
+
+        # svm_acc = evaluate_svm(train_features.data.cpu().numpy(), train_label.data.cpu().numpy(), test_features.data.cpu().numpy(), test_label.data.cpu().numpy())
+
+        # print_log('[Validation] EPOCH: %d  acc = %.4f' % (epoch,svm_acc), logger=logger)
+        
+        
         for idx, (taxonomy_ids, model_ids, data) in enumerate(test_dataloader):
             points = data[0].cuda()
-            label = data[1].cuda()
+            num_group = data[1][0].item()
+            group_size = data[2][0].item()
+            level = taxonomy_ids[0].split("@")[-1]
+            
+            loss_1, loss_2 = base_model(points, num_group=num_group, group_size=group_size, level=level, eval=True)
+            
+            loss = loss_1 + loss_2
 
-            points = misc.fps(points, npoints)
-            assert points.size(1) == npoints
-            feature = base_model(points, noaug=True)
-            target = label.view(-1)
-
-            test_features.append(feature.detach())
-            test_label.append(target.detach())
-
-
-        train_features = torch.cat(train_features, dim=0)
-        train_label = torch.cat(train_label, dim=0)
-        test_features = torch.cat(test_features, dim=0)
-        test_label = torch.cat(test_label, dim=0)
-
-        if args.distributed:
-            train_features = dist_utils.gather_tensor(train_features, args)
-            train_label = dist_utils.gather_tensor(train_label, args)
-            test_features = dist_utils.gather_tensor(test_features, args)
-            test_label = dist_utils.gather_tensor(test_label, args)
-
-        svm_acc = evaluate_svm(train_features.data.cpu().numpy(), train_label.data.cpu().numpy(), test_features.data.cpu().numpy(), test_label.data.cpu().numpy())
-
-        print_log('[Validation] EPOCH: %d  acc = %.4f' % (epoch,svm_acc), logger=logger)
-
+        print_log('[Validation] EPOCH: %d  acc = %.4f' % (epoch, -(loss.item())), logger=logger)
         if args.distributed:
             torch.cuda.synchronize()
 
     # Add testing results to TensorBoard
     if val_writer is not None:
-        val_writer.add_scalar('Metric/ACC', svm_acc, epoch)
+        val_writer.add_scalar('Metric/ACC', -(loss.item()), epoch)
 
-    return Acc_Metric(svm_acc)
+    return Acc_Metric(-(loss.item()))
 
 
 def test_net():

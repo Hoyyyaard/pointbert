@@ -162,7 +162,8 @@ def build_llm_opti_sche(base_model, config, train_loader, finetune=False):
     warmup_lr = 1e-6
 
     # Define optimizer
-    optimizer = optim.Adam(opti_params, lr=initial_lr, weight_decay=opti_config.kwargs.weight_decay)  # No weight decay
+    eps = 1e-4 if finetune else 1e-8
+    optimizer = optim.Adam(opti_params, lr=initial_lr, weight_decay=opti_config.kwargs.weight_decay, eps=eps)  # No weight decay
 
     # Define scheduler with warmup
     total_steps = len(train_loader) * total_epochs

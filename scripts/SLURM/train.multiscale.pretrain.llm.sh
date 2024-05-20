@@ -52,7 +52,7 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM.yaml \
-    --exp_name multiscale_llm_pretrain \
-    --ckpt #TODO
+    --exp_name 0520_MultiScale_LLM_Pretrain \
+    --ckpt experiments/Point-BERT/MultiScale_models/0519_Multiscale_Pointbert_Pretrain_WRgb/ckpt-best.pth \
     # --resume  
 

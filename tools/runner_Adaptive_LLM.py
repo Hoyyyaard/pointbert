@@ -130,6 +130,9 @@ def run_net(args, config, train_writer=None, val_writer=None):
     total_steps = len(train_dataloader) * total_epochs
     warmup_steps = int(total_steps * warmup_ratio)
     
+    # 启用自动微分异常检测
+    # torch.autograd.set_detect_anomaly(True)
+    
     # trainval
     # training
     epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
@@ -156,6 +159,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         for idx, data_dict in enumerate(train_dataloader):
             
             pbar.update(1)
+        
             curr_time = time.time()
             num_iter += 1
             n_itr = epoch * n_batches + idx
@@ -177,12 +181,20 @@ def run_net(args, config, train_writer=None, val_writer=None):
             
             loss.backward()
             torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=10, norm_type=2)
-
+            
+            # for name, param in base_model.module.named_parameters():
+            #     if torch.isnan(param).any():
+            #         pass
+            
             # forward
             if num_iter == config.step_per_update:
                 num_iter = 0
                 optimizer.step()
                 base_model.zero_grad()
+                
+            # for name, param in base_model.module.named_parameters():
+            #     if torch.isnan(param).any():
+            #         pass
 
             if args.distributed:
                 loss = dist_utils.reduce_tensor(loss, args)
@@ -220,7 +232,8 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 optimizer.param_groups[0]['lr'] =  warmup_lr 
             else:
                 optimizer.param_groups[0]['lr'] =  0.5 * (math.cos((lr_step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
-            
+        
+        
                 
         # Debug
         # if isinstance(scheduler, list):
@@ -356,10 +369,10 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                 
             for k, v in candidates.items():
                 corpus = test_dataloader.dataset.corpus[k]
-                corpus = {
-                    cor['episode_id']: [cor['anno']['utterance']] \
-                        for cor in corpus
-                }
+                new_corpus = {}
+                for cor in corpus:
+                    new_corpus[cor['episode_id']] = cor['anno']['utterance'] if 'utterance' in cor['anno'].keys() else cor['anno']['answers']
+                corpus = new_corpus
                 score_per_caption, message, eval_metric = score_captions(
                     OrderedDict([(key, corpus[key]) for key in v]), v
                 )

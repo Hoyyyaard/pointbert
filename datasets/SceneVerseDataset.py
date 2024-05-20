@@ -23,85 +23,98 @@ TASK_PROMPT = {
         '### human: offer a succinct explanation of the 3D object presented. ### assistant:',
         '### human: give a short and clear explanation of the 3D object. ### assistant:',
         '### human: describe the characteristics of this object in the 3D scene. ### assistant:',
-        '### human: give an overview of the object. ### assistant:'
-        '### human: explain the features of the object with given 3D context. ### assistant:'
-        '### human: provide a concise description of the object. ### assistant:'
-        '### human: detail the attributes of this object. ### assistant:'
+        '### human: give an overview of the object. ### assistant:',
+        '### human: explain the features of the object with given 3D context. ### assistant:',
+        '### human: provide a concise description of the object. ### assistant:',
+        '### human: detail the attributes of this object. ### assistant:',
     ],
     'scene_caption': [
         '### human: describe the scene given 3D context. ### assistant:',
-        '### human: provide a description of the scene in the given 3D context. ### assistant:'
-        '### human: explain the details of the scene within the specified 3D context. ### assistant:'
-        '### human: offer an overview of the scene in the indicated 3D context. ### assistant:'
-        '### human: describe the features of the scene in the provided 3D context. ### assistant:'
-        '### human: detail the elements of the scene in the mentioned 3D context. ### assistant:'
-        '### human: give an explanation of the scene in the designated 3D context. ### assistant:'
-        '### human: summarize the scene in the described 3D context. ### assistant:'
-        '### human: illustrate the scene within the given 3D context. ### assistant:'
-        '### human: characterize the scene in the specific 3D context. ### assistant:'
+        '### human: provide a description of the scene in the given 3D context. ### assistant:',
+        '### human: explain the details of the scene within the specified 3D context. ### assistant:',
+        '### human: offer an overview of the scene in the indicated 3D context. ### assistant:',
+        '### human: describe the features of the scene in the provided 3D context. ### assistant:',
+        '### human: detail the elements of the scene in the mentioned 3D context. ### assistant:',
+        '### human: give an explanation of the scene in the designated 3D context. ### assistant:',
+        '### human: summarize the scene in the described 3D context. ### assistant:',
+        '### human: illustrate the scene within the given 3D context. ### assistant:',
+        '### human: characterize the scene in the specific 3D context. ### assistant:',
     ],
     'region_caption': [
         '### human: describe the relationship between the objects gievn part of the 3D scene. ### assistant:',
-        '### human: describe how the objects are related in the specified part of the 3D scene. ### assistant:'
-        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene. ### assistant:'
-        '### human: offer an explanation of the relationship between the objects in the described part of the 3D scene. ### assistant:'
-        '### human: detail the interaction between the objects in the given segment of the 3D scene. ### assistant:'
-        '### human: illustrate the relationship between the objects within the specified part of the 3D scene. ### assistant:'
-        '### human: summarize the connection between the objects in the mentioned part of the 3D scene. ### assistant:'
-        '### human: characterize the relationship between the objects in the provided part of the 3D scene. ### assistant:'
-        '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:'
-        '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:'
+        '### human: describe how the objects are related in the specified part of the 3D scene. ### assistant:',
+        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene. ### assistant:',
+        '### human: offer an explanation of the relationship between the objects in the described part of the 3D scene. ### assistant:',
+        '### human: detail the interaction between the objects in the given segment of the 3D scene. ### assistant:',
+        '### human: illustrate the relationship between the objects within the specified part of the 3D scene. ### assistant:',
+        '### human: summarize the connection between the objects in the mentioned part of the 3D scene. ### assistant:',
+        '### human: characterize the relationship between the objects in the provided part of the 3D scene. ### assistant:',
+        '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:',
+        '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:',
     ],
     'region_caption_with_bbox': [
         '### human: describe the relationship between the objects gievn part of the 3D scene and output the location of these objects. ### assistant:',
-        '### human: describe how the objects are related in the specified part of the 3D scene and point out these object in the scene. ### assistant:'
-        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene and locate them. ### assistant:'
-        '### human: offer an explanation of the relationship between the objects you located in the described part of the 3D scene. ### assistant:'
-        '### human: detail the interaction between the objects in the given segment of the 3D scene and output the location of these objects. ### assistant:'
-        '### human: find the position of the object and illustrate their relationship between them within the specified part of the 3D scene. ### assistant:'
-        '### human: summarize the connection between the objects in the mentioned part of the 3D scene and point out these location. ### assistant:'
-        '### human: characterize the relationship between the objects in the provided part of the 3D scene and output the location of these objects. ### assistant:'
-        '### human: outline the relationship between the objects in the designated part of the 3D scene and output the location of these objects. ### assistant:'
-        '### human: depict the interaction between the objects in the stated part of the 3D scene and output the location of these objects. ### assistant:'
+        '### human: describe how the objects are related in the specified part of the 3D scene and point out these object in the scene. ### assistant:',
+        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene and locate them. ### assistant:',
+        '### human: offer an explanation of the relationship between the objects you located in the described part of the 3D scene. ### assistant:',
+        '### human: detail the interaction between the objects in the given segment of the 3D scene and output the location of these objects. ### assistant:',
+        '### human: find the position of the object and illustrate their relationship between them within the specified part of the 3D scene. ### assistant:',
+        '### human: summarize the connection between the objects in the mentioned part of the 3D scene and point out these location. ### assistant:',
+        '### human: characterize the relationship between the objects in the provided part of the 3D scene and output the location of these objects. ### assistant:',
+        '### human: outline the relationship between the objects in the designated part of the 3D scene and output the location of these objects. ### assistant:',
+        '### human: depict the interaction between the objects in the stated part of the 3D scene and output the location of these objects. ### assistant:',
     ],
     'object_grouding': [
         '### human: locate the object in the 3D scene given the object description {caption}. ### assistant:',
-        '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:'
-        '### human: identify the object in the 3D scene based on the given description {caption}. ### assistant:'
-        '### human: pinpoint the object in the 3D scene from the described details {caption}. ### assistant:'
-        '### human: determine the location of the object in the 3D scene using the description {caption}. ### assistant:'
-        '### human: locate the object within the 3D scene according to the description {caption}. ### assistant:'
-        '### human: ascertain the position of the object in the 3D scene given the description {caption}. ### assistant:'
-        '### human: find the position of the object in the 3D scene using the details provided {caption}. ### assistant:'
-        '### human: spot the object in the 3D scene based on the description {caption}. ### assistant:'
-        '### human: seek out the object in the 3D scene from the given details {caption}. ### assistant:'
-        '### human: identify where the object is located in the 3D scene using the description {caption}. ### assistant:'
+        '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:',
+        '### human: identify the object in the 3D scene based on the given description {caption}. ### assistant:',
+        '### human: pinpoint the object in the 3D scene from the described details {caption}. ### assistant:',
+        '### human: determine the location of the object in the 3D scene using the description {caption}. ### assistant:',
+        '### human: locate the object within the 3D scene according to the description {caption}. ### assistant:',
+        '### human: ascertain the position of the object in the 3D scene given the description {caption}. ### assistant:',
+        '### human: find the position of the object in the 3D scene using the details provided {caption}. ### assistant:',
+        '### human: spot the object in the 3D scene based on the description {caption}. ### assistant:',
+        '### human: seek out the object in the 3D scene from the given details {caption}. ### assistant:',
+        '### human: identify where the object is located in the 3D scene using the description {caption}. ### assistant:',
     ],
     'scene_grouding':[
         '### human: locate all objects given the 3D scene. ### assistant:',
-        '### human: identify all objects in the given 3D scene. ### assistant:'
-        '### human: find every object in the provided 3D scene. ### assistant:'
-        '### human: list all objects present in the specified 3D scene. ### assistant:'
-        '### human: pinpoint each object in the given 3D scene. ### assistant:'
-        '### human: locate every object in the described 3D scene. ### assistant:'
-        '### human: determine the location of all objects in the provided 3D scene. ### assistant:'
-        '### human: identify the position of each object in the given 3D scene. ### assistant:'
-        '### human: find and list all objects in the specified 3D scene. ### assistant:'
-        '### human: recognize all objects within the given 3D scene. ### assistant:'
-        '### human: enumerate every object in the provided 3D scene. ### assistant:'
+        '### human: identify all objects in the given 3D scene. ### assistant:',
+        '### human: find every object in the provided 3D scene. ### assistant:',
+        '### human: list all objects present in the specified 3D scene. ### assistant:',
+        '### human: pinpoint each object in the given 3D scene. ### assistant:',
+        '### human: locate every object in the described 3D scene. ### assistant:',
+        '### human: determine the location of all objects in the provided 3D scene. ### assistant:',
+        '### human: identify the position of each object in the given 3D scene. ### assistant:',
+        '### human: find and list all objects in the specified 3D scene. ### assistant:',
+        '### human: recognize all objects within the given 3D scene. ### assistant:',
+        '### human: enumerate every object in the provided 3D scene. ### assistant:',
     ],
     'object_caption_given_bbox':[
         '### human: describe the object in the 3D scene given the object bounding box {bbox}. ### assistant:',
-        '### human: provide a description of the object in the 3D scene using the given bounding box {bbox}. ### assistant:'
-        '### human: describe the object within the 3D scene based on the provided bounding box {bbox}. ### assistant:'
-        '### human: explain the features of the object in the 3D scene given its bounding box {bbox}. ### assistant:'
-        '### human: detail the characteristics of the object in the 3D scene using the bounding box {bbox}. ### assistant:'
-        '### human: offer a description of the object in the 3D scene from the given bounding box {bbox}. ### assistant:'
-        '### human: summarize the attributes of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:'
-        '### human: characterize the object in the 3D scene based on its bounding box {bbox}. ### assistant:'
-        '### human: give an overview of the object in the 3D scene using the bounding box information {bbox}. ### assistant:'
-        '### human: identify the features of the object in the 3D scene given the bounding box {bbox}. ### assistant:'
-        '### human: outline the details of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:'
+        '### human: provide a description of the object in the 3D scene using the given bounding box {bbox}. ### assistant:',
+        '### human: describe the object within the 3D scene based on the provided bounding box {bbox}. ### assistant:',
+        '### human: explain the features of the object in the 3D scene given its bounding box {bbox}. ### assistant:',
+        '### human: detail the characteristics of the object in the 3D scene using the bounding box {bbox}. ### assistant:',
+        '### human: offer a description of the object in the 3D scene from the given bounding box {bbox}. ### assistant:',
+        '### human: summarize the attributes of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:',
+        '### human: characterize the object in the 3D scene based on its bounding box {bbox}. ### assistant:',
+        '### human: give an overview of the object in the 3D scene using the bounding box information {bbox}. ### assistant:',
+        '### human: identify the features of the object in the 3D scene given the bounding box {bbox}. ### assistant:',
+        '### human: outline the details of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:',
+    ],
+    'scene_qa':[
+        '### human: answer the question about the 3D scene in short. {question} ### assistant:',
+        '### human: give a brief answer to the question about the 3D scene. {question} ### assistant:',
+        '### human: provide a short response to the 3D scene question. {question} ### assistant:',
+        '### human: respond concisely to the inquiry regarding the 3D scene. {question} ### assistant:',
+        '### human: offer a succinct answer to the 3D scene question. {question} ### assistant:',
+        '### human: briefly answer the question about the 3D scene. {question} ### assistant:',
+        '### human: give a short response to the question concerning the 3D scene. {question} ### assistant:',
+        '### human: provide a concise reply to the question about the 3D scene. {question} ### assistant:',
+        '### human: answer the inquiry on the 3D scene briefly. {question} ### assistant:',
+        '### human: give a brief response to the question related to the 3D scene. {question} ### assistant:',
+        '### human: offer a short answer to the question regarding the 3D scene. {question} ### assistant:',
     ]
 }
 
@@ -671,6 +684,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             # Process object caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
             # ~136k
+            ## As HM3D only contains annotations from template like 'the pointcloud of xxx'
+            if dataset_name == 'HM3D':
+                continue
             object_annos = annotations.get('object_caption')
             for oa in object_annos:
                 scan_name = oa['scan_id']
@@ -813,8 +829,6 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     self.order_levels.extend(['instance'] * batch_size_pre_rank)
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
-        
-        
     def _load_annotation(self, annotation_path):
         dataset_name_to_annotation = {
             'object_caption' : ('ssg_obj_caption_gpt.json', 'ssg_obj_caption_template.json'),
@@ -1134,7 +1148,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     if text in answers:
                         for k,v in inst_to_label.items():
                             if v == text and sum(instance_labels == int(k)) > 0 :
-                                bbox = self.instance_id_to_bbox_str(int(k), instance_labels, points)
+                                bbox = self.instance_id_to_bbox_str(int(k), instance_labels, points[:, :3])
                                 answers = answers[:pos + len(text)] + ' ' + bbox + ' ' + answers[pos + len(text):]
                 intruction = random.choice(TASK_PROMPT[f'{task_name}_with_bbox'])
             else:
@@ -1301,7 +1315,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                     if config.subset == 'train':
                         for ans in oc['answers']:
                             scan_name = oc['scene_id']
-                            anno = {'scene_id':oc['scene_id'], 'object_id':oc['object_id'], 'answers':[ans], 'object_name':oc['object_name']}
+                            anno = {'scene_id':oc['scene_id'], 'target_id':oc['object_id'], 'answers':[ans], 'object_name':oc['object_name']}
                             self.all_object_caption.append({'dataset_name':dn, "scan_name":scan_name, "anno":anno, "task_name": "object_caption"})
                     ## In eval we hava multiple answers
                     else:
@@ -1317,7 +1331,10 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         if config.subset == 'train':  
             self.all_object_grouding = copy.deepcopy(self.all_object_caption)
             for og in self.all_object_grouding:
-                og['task_name'] = 'object_grouding'
+                if np.random.random() > 0.5:
+                    og['task_name'] = 'object_grouding'  # Given object caption and scene pointclouds output the object bbox
+                else:
+                    og['task_name'] = 'object_caption_given_bbox'  # Given object bbox and scene pointclouds output the object caption
         
         # Load part 3 task: scene understanding from all scans of sceneverse
         ## All in scene_id question answer format
@@ -1358,12 +1375,69 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self._instance_group_size = config.INSTANCE_GROUP_SIZE
         self._instance_num_groups = config.INSTANCE_NUM_GROUP
         
+        if not hasattr(self, 'all_object_grouding'):
+            self.all_object_grouding = []
+        
+        # Add Unique ID for each episode
+        episode_id = 0
+        for data in self.all_scene_qa:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        for data in self.all_scene_understanding:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        for data in self.all_object_caption:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        for data in self.all_object_grouding:
+            data['episode_id'] = episode_id
+            episode_id += 1
+        
+        # Prepare corpus for evaluation
+        self.corpus = {
+            'scene_qa': copy.deepcopy(self.all_scene_qa),
+            'object_caption': copy.deepcopy(self.all_object_caption),
+            'scene_understanding': copy.deepcopy(self.all_scene_understanding)
+        }
+        
+        all_scene_level_data = []
+        all_scene_level_data.extend(self.all_scene_qa)
+        all_scene_level_data.extend(self.all_scene_understanding)
+        all_scene_level_data.extend(self.all_object_grouding)
+        random.shuffle(all_scene_level_data)
+        dist.broadcast_object_list(all_scene_level_data, src=0)
+        random.shuffle(self.all_object_caption)
+        dist.broadcast_object_list(self.all_object_caption, src=0)
+        batch_size_pre_rank = config.tbs
         self.order_episodes = []
-        self.order_episodes.extend(self.all_scene_qa)
-        self.order_episodes.extend(self.all_object_caption)
-        self.order_episodes.extend(self.all_scene_understanding)
-        if hasattr(self, 'all_object_grouding'):
-            self.order_episodes.extend(self.all_object_grouding)
+        while all_scene_level_data or self.all_object_caption:
+            if self.all_object_caption:
+                if len(self.all_object_caption) < batch_size_pre_rank:
+                    pop_num  = len(self.all_object_caption)
+                    [self.all_object_caption.pop(0) for _ in range(pop_num)]
+                else:
+                    self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
+            if all_scene_level_data:
+                if len(all_scene_level_data) < batch_size_pre_rank:
+                    pop_num  = len(all_scene_level_data)
+                    [all_scene_level_data.pop(0) for _ in range(pop_num)]
+                else:
+                    self.order_episodes.extend([all_scene_level_data.pop(0) for _ in range(batch_size_pre_rank)])
+        
+        
+        # self.order_episodes = []
+        # self.order_episodes.extend(self.all_scene_qa)
+        # self.order_episodes.extend(self.all_object_caption)
+        # self.order_episodes.extend(self.all_scene_understanding)
+        # if hasattr(self, 'all_object_grouding'):
+        #     self.order_episodes.extend(self.all_object_grouding)
+            
+        # Add Unique ID for each episode
+        # episode_id = 0
+        # for data in self.order_episodes:
+        #     data['episode_id'] = episode_id
+        #     episode_id += 1
+
         
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
@@ -1499,19 +1573,21 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
         
         self.tokenizer_config = dict(
-            max_length=128, 
+            max_length=256, 
             padding='max_length', 
             truncation='longest_first', 
             return_tensors='np'
         )
-        
 
         points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
 
-        if task_name == 'scanqa':
+        if task_name == 'scene_qa':
             
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
             points = self.pc_norm(points)
+            
+            points = np.concatenate([points, colors/255], 1)
+            
             ret_dict = {
                 'points': points.astype(np.float32),
                 'colors': colors.astype(np.float32),
@@ -1521,11 +1597,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'level': 'scene',
                 'scan_name': scan_name,
                 'task_name': task_name,
-                'unique_key': anno['question_id'] + '-'  + anno['question']
+                'episode_id': data['episode_id']
             }
             
             question = anno['question']
-            intruction = f'{question}'
+            intruction = random.choice(TASK_PROMPT[task_name]).format(question=question)
+            
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['answers'][0]
@@ -1539,6 +1616,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             ret_dict['gradient_mask'] = \
                 (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
             
+            ret_dict['answers'] = answers
             ret_dict['question'] = intruction
             ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
@@ -1546,9 +1624,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             return ret_dict
         
         # Scene Caption
-        elif task_name == 'scene_caption':
+        elif task_name == 'scene_understanding':
             points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
             points = self.pc_norm(points)
+            
+            points = np.concatenate([points, colors/255], 1)
+            
             ret_dict = {
                 'points': points.astype(np.float32),
                 'colors': colors.astype(np.float32),
@@ -1558,10 +1639,10 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'level': 'scene',
                 'scan_name': scan_name,
                 'task_name': task_name,
-                'unique_key': anno['scene_id']
+                'episode_id': data['episode_id']
             }
             
-            intruction = f'Describe the scene in detailed: '
+            intruction = anno['question']
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             # ret_dict['answers'] = answers
@@ -1571,6 +1652,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             **self.tokenizer_config
             )
             
+            ret_dict['answers'] = answers
             ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
             ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
             ret_dict['gradient_mask'] = \
@@ -1583,14 +1665,81 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             return ret_dict
         
         # Object Caption
-        # TODO
         elif task_name == 'object_caption':
-            instance_id = int(anno['object_id'])
+            instance_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
             object_points = points[instance_labels == instance_id]
             object_colors = colors[instance_labels == instance_id]
             instance_labels = instance_labels[instance_labels == instance_id]
             points, colors, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
             points = self.pc_norm(points)
+            
+            points = np.concatenate([points, colors/255], 1)
+            
+            ret_dict = {
+                'points': points.astype(np.float32),
+                'colors': colors.astype(np.float32),
+                'num_groups': self._instance_num_groups,
+                'group_size': self._instance_group_size,
+                'dataset_name': dataset_name,
+                'level': 'instance',
+                'scan_name': scan_name,
+                'task_name': task_name,
+                'episode_id': data['episode_id']
+            }
+            
+            intruction = random.choice(TASK_PROMPT[task_name])
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            
+            ret_dict['question'] = intruction
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+
+            answers = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
+            ret_dict['answers'] = answers
+            llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+            )
+            
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            
+            return ret_dict
+        
+        elif task_name == 'object_grouding' or task_name == 'object_caption_given_bbox':
+            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, npoint=self._npoint)
+            points = self.pc_norm(points)
+            tgt_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
+            object_points = points[instance_labels == tgt_id]
+            center, whl = self.convert_pc_to_box(object_points)
+            
+            point_cloud_dims_min = points.min(axis=0)
+            point_cloud_dims_max = points.max(axis=0)
+
+            box_centers = center.astype(np.float32)
+            
+            center_normalizing_range = [
+                np.zeros((1, 3), dtype=np.float32),
+                np.ones((1, 3), dtype=np.float32),
+            ]
+            box_centers_normalized = self._shift_scale_points(
+                box_centers[None, ...],
+                src_range=[
+                    point_cloud_dims_min[None, ...],
+                    point_cloud_dims_max[None, ...],
+                ],
+                dst_range=center_normalizing_range,
+            )
+            mult_factor = point_cloud_dims_max - point_cloud_dims_min
+            box_sizes_normalized = self._scale_points(
+                whl.astype(np.float32)[None, ...],
+                mult_factor=1.0 / mult_factor[None, ...],
+            )
+            bbox_str = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
+            
+            points = np.concatenate([points, colors/255], 1)
             
             ret_dict = {
                 'points': points.astype(np.float32),
@@ -1598,21 +1747,35 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'num_groups': self._num_groups,
                 'group_size': self._group_size,
                 'dataset_name': dataset_name,
-                'level': 'instance',
+                'level': 'scene',
                 'scan_name': scan_name,
                 'task_name': task_name,
-                'unique_key': anno['scene_id'] + '-' + anno['object_id']
+                'episode_id': data['episode_id']
             }
             
-            intruction = f'Describe the object: '
+            caption = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
+            if task_name == 'object_grouding':
+                intruction = random.choice(TASK_PROMPT[task_name]).format(caption=caption)
+                answers = bbox_str
+            else:
+                intruction = random.choice(TASK_PROMPT[task_name]).format(bbox=bbox_str)
+                answers = caption
+                
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
-            # ret_dict['answers'] = answers
+            llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+            )
+            
+            ret_dict['answers'] = answers
             ret_dict['question'] = intruction
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
             ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
             return ret_dict
-        
-        else:
-            assert False
+            
