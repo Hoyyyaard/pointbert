@@ -399,7 +399,7 @@ def test(base_model, test_dataloader, args, config, logger = None):
 
             print(taxonomy_ids)
             
-            ret = base_model(inp = points[:, :,:3].contiguous(), hard=True, eval=True, group_size=group_size, num_group=num_group, level=level)
+            ret = base_model(inp = points, hard=True, eval=True, group_size=group_size, num_group=num_group, level=level)
             dense_points = ret[1]
 
             final_image = []

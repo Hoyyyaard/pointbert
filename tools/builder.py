@@ -68,7 +68,6 @@ def build_opti_sche(base_model, config):
     elif sche_config.type == 'CosLR':
         scheduler = CosineLRScheduler(optimizer,
                 t_initial=sche_config.kwargs.epochs,
-                t_mul=1,
                 lr_min=1e-6,
                 decay_rate=0.1,
                 warmup_lr_init=1e-6,
@@ -92,94 +91,68 @@ def build_opti_sche(base_model, config):
 
 def build_llm_opti_sche(base_model, config, train_loader, finetune=False):
     
-    if not finetune:
-        for n, p in base_model.module.llm.named_parameters():
-            p.requires_grad = False
-        for n, p in base_model.module.encoder.named_parameters():
-            p.requires_grad = False
-    else:
-        for n, p in base_model.module.llm.named_parameters():
-            p.requires_grad = True
-        for n, p in base_model.module.encoder.named_parameters():
-            p.requires_grad = False
-    
     opti_params = filter(lambda p: p.requires_grad, base_model.parameters())
     
     opti_config = config.optimizer
-    # if opti_config.type == 'AdamW':
-    #     def add_weight_decay(model, weight_decay=1e-5, skip_list=()):
-    #         decay = []
-    #         no_decay = []
-    #         for name, param in model.module.named_parameters():
-    #             if not param.requires_grad:
-    #                 continue  # frozen weights
-    #             if len(param.shape) == 1 or name.endswith(".bias") or 'token' in name or name in skip_list:
-    #                 # print(name)
-    #                 no_decay.append(param)
-    #             else:
-    #                 decay.append(param)
-    #         return [
-    #             {'params': no_decay, 'weight_decay': 0.},
-    #             {'params': decay, 'weight_decay': weight_decay}]
-    #     param_groups = add_weight_decay(base_model, weight_decay=opti_config.kwargs.weight_decay)
-    #     optimizer = optim.AdamW(param_groups, **opti_config.kwargs)
-    # elif opti_config.type == 'Adam':
-    #     optimizer = optim.Adam(opti_params, **opti_config.kwargs)
-    # elif opti_config.type == 'SGD':
-    #     optimizer = optim.SGD(opti_params, nesterov=True, **opti_config.kwargs)
-    # else:
-    #     raise NotImplementedError()
+    eps = 1e-4 if finetune else 1e-8
+    if opti_config.type == 'AdamW':
+        optimizer = optim.AdamW(opti_params, eps=eps, **opti_config.kwargs)
+    elif opti_config.type == 'Adam':
+        optimizer = optim.Adam(opti_params, eps=eps, **opti_config.kwargs)
+    elif opti_config.type == 'SGD':
+        optimizer = optim.SGD(opti_params, nesterov=True, eps=eps,  **opti_config.kwargs)
+    else:
+        raise NotImplementedError()
 
     sche_config = config.scheduler
-    # if sche_config.type == 'LambdaLR':
-    #     scheduler = build_lambda_sche(optimizer, sche_config.kwargs)  # misc.py
-    # elif sche_config.type == 'CosLR':
-    #     scheduler = CosineLRScheduler(optimizer,
-    #             t_initial=sche_config.kwargs.epochs,
-    #             t_mul=1,
-    #             lr_min=1e-6,
-    #             decay_rate=0.1,
-    #             warmup_lr_init=1e-6,
-    #             warmup_t=sche_config.kwargs.initial_epochs,
-    #             cycle_limit=1,
-    #             t_in_epochs=True)
-    # elif sche_config.type == 'StepLR':
-    #     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, **sche_config.kwargs)
-    # elif sche_config.type == 'function':
-    #     scheduler = None
-    # else:
-    #     raise NotImplementedError()
+    if sche_config.type == 'LambdaLR':
+        scheduler = build_lambda_sche(optimizer, sche_config.kwargs)  # misc.py
+    elif sche_config.type == 'CosLR':
+        print("warmup_t", int(sche_config.kwargs.initial_epochs * len(train_loader) * sche_config.kwargs.epochs))
+        scheduler = CosineLRScheduler(optimizer,
+                t_initial=int(sche_config.kwargs.epochs * len(train_loader)),
+                lr_min=1e-6,
+                warmup_lr_init=1e-6,
+                warmup_t=int(sche_config.kwargs.initial_epochs * len(train_loader) * sche_config.kwargs.epochs),
+                cycle_limit=1,
+                t_in_epochs=True)
+    elif sche_config.type == 'StepLR':
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, **sche_config.kwargs)
+    elif sche_config.type == 'function':
+        scheduler = None
+    else:
+        raise NotImplementedError()
     
-    # if config.get('bnmscheduler') is not None:
-    #     bnsche_config = config.bnmscheduler
-    #     if bnsche_config.type == 'Lambda':
-    #         bnscheduler = build_lambda_bnsche(base_model, bnsche_config.kwargs)  # misc.py
-    #     scheduler = [scheduler, bnscheduler]
+    if config.get('bnmscheduler') is not None:
+        bnsche_config = config.bnmscheduler
+        if bnsche_config.type == 'Lambda':
+            bnscheduler = build_lambda_bnsche(base_model, bnsche_config.kwargs)  # misc.py
+        scheduler = [scheduler, bnscheduler]
     
-    total_epochs = sche_config.kwargs.epochs
-    warmup_ratio = opti_config.kwargs.warmup_ratio  # Warmup ratio of 3%
-    initial_lr = opti_config.kwargs.lr  # Initial learning rate
-    warmup_lr = 1e-6
+    # total_epochs = sche_config.kwargs.epochs
+    # warmup_ratio = opti_config.kwargs.warmup_ratio  # Warmup ratio of 3%
+    # initial_lr = opti_config.kwargs.lr  # Initial learning rate
+    # warmup_lr = 1e-6
 
     # Define optimizer
-    eps = 1e-4 if finetune else 1e-8
-    optimizer = optim.Adam(opti_params, lr=initial_lr, weight_decay=opti_config.kwargs.weight_decay, eps=eps)  # No weight decay
+    # eps = 1e-4 if finetune else 1e-8
+    # optimizer = optim.Adam(opti_params, lr=initial_lr, weight_decay=opti_config.kwargs.weight_decay, eps=eps)  # No weight decay
 
-    # Define scheduler with warmup
-    total_steps = len(train_loader) * total_epochs
-    warmup_steps = int(total_steps * warmup_ratio)
-    print("warmup_steps", warmup_steps)
+    # # Define scheduler with warmup
+    # total_steps = len(train_loader) * total_epochs
+    # warmup_steps = int(total_steps * warmup_ratio)
+    # print("warmup_steps", warmup_steps)
     
-    # Define lambda function for warmup scheduler
-    def lr_lambda(step):
-        if step < warmup_steps:
-            return warmup_lr + step * (initial_lr - warmup_lr) / warmup_steps
-        else:
-            return 0.5 * (math.cos((step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
+    # # Define lambda function for warmup scheduler
+    # def lr_lambda(step):
+    #     if step < warmup_steps:
+    #         return warmup_lr + step * (initial_lr - warmup_lr) / warmup_steps
+    #     else:
+    #         return 0.5 * (math.cos((step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
 
-    scheduler = LambdaLR(optimizer, lr_lambda)
+    # scheduler = LambdaLR(optimizer, lr_lambda)
     
-    return optimizer, scheduler, warmup_steps
+    return optimizer, scheduler
 
 def resume_model(base_model, args, logger = None):
     ckpt_path = os.path.join(args.experiment_path, 'ckpt-last.pth')
@@ -195,7 +168,8 @@ def resume_model(base_model, args, logger = None):
     # if args.local_rank == 0:
     base_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_model'].items()}
     msg = base_model.load_state_dict(base_ckpt, strict = False)
-    print_log(msg)
+    if torch.cuda.current_device() == 0:
+        print_log(msg)
 
     # parameter
     start_epoch = state_dict['epoch'] + 1
@@ -218,7 +192,7 @@ def resume_optimizer(optimizer, args, logger = None):
     # optimizer
     optimizer.load_state_dict(state_dict['optimizer'])
 
-def save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None):
+def save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None,):
     if args.local_rank == 0:
         torch.save({
                     'base_model' : base_model.module.state_dict() if args.distributed else base_model.state_dict(),
@@ -229,13 +203,14 @@ def save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, prefix,
                     }, os.path.join(args.experiment_path, prefix + '.pth'))
         print_log(f"Save checkpoint at {os.path.join(args.experiment_path, prefix + '.pth')}", logger = logger)
 
-def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None):
+def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None, finetune=False):
     if args.local_rank == 0:
-        weight_ckpt = base_model.module.state_dict() if args.distributed else base_model.state_dict()
+        weight_ckpt = base_model.module.state_dict() if args.distributed and not finetune else base_model.state_dict()
         parameter_names = list(weight_ckpt.keys())
-        for name in parameter_names:
-            if name.find('llm.') != -1:
-                weight_ckpt.pop(name)
+        if not finetune:
+            for name in parameter_names:
+                if name.find('llm.') != -1:
+                    weight_ckpt.pop(name)
         torch.save({
                     'base_model' : weight_ckpt,
                     'optimizer' : optimizer.state_dict(),

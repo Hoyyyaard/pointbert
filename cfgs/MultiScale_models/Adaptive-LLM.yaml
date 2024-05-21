@@ -1,18 +1,18 @@
 optimizer : {
-  type: Adam,
+  type: AdamW,
   kwargs: {
-  lr : 0.001, 
-  weight_decay : 0,
-  warmup_ratio: 0.1,
-
+  lr : 0.0005, 
+  weight_decay : 0.05,
 }}
+
 
 scheduler: {
   type: CosLR,
   kwargs: {
     epochs: 5,
-    initial_epochs : 0
+    initial_epochs : 0.05
 }}
+
 
 dataset : {
   train : { _base_: cfgs/dataset_configs/SceneVerseLLMPretrainDataset.yaml, 
@@ -22,7 +22,7 @@ dataset : {
 model : {
   NAME: PointTransformer, 
 
-  quantization: False, 
+  quantization: True, 
 
   trans_dim: 384, 
   depth: 12, 

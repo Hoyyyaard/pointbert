@@ -2,9 +2,8 @@
 
 set -x
 
-
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-# export CUDA_VISIBLE_DEVICES=2,3,5,6,4,0,7,1
+
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -50,9 +49,10 @@ fi
 
 
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
-    $CMD  main.py \
+    $CMD  main_ALLM.py \
     --launcher slurm --sync_bn \
-    --config cfgs/MultiScale_models/dvae.yaml \
-    --exp_name 0518_Multiscale_Dvae_Wlevelmlp \
-    --resume  
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune.yaml \
+    --exp_name 0521_MultiScale_LLM_Finetune \
+    --ckpt experiments/Adaptive-LLM/MultiScale_models/0521_MultiScale_LLM_Pretrain/ckpt-last.pth \
+    # --resume  
 

@@ -8,7 +8,11 @@ from transformers import AutoTokenizer
 from tools.generation_utils import generation
 from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
-
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import (
+    enable_wrap,
+    wrap,
+)
 
 class AdaptiveLLM(nn.Module):
     def __init__(self, llm_config, encoder_config):
@@ -54,33 +58,46 @@ class AdaptiveLLM(nn.Module):
             nn.ReLU(),
         )
         
-    def load_model_from_ckpt(self, bert_ckpt_path, args):
+    def wrap_fsdp(self):
+        tmp_module_list = []
+        for li,layer in enumerate(self.llm.model.layers):
+            with enable_wrap(wrapper_cls=FSDP, device_id=torch.cuda.current_device()):
+                tmp_module_list.append(wrap(layer))    
+        tmp_module_list = nn.ModuleList(tmp_module_list)
+        setattr(self.llm.model, 'layers', tmp_module_list)
+        # with enable_wrap(wrapper_cls=FSDP, device_id=device_id):
+        #     self.llm.model.layers = wrap(self.llm.model.layers)
+    
+    def load_model_from_ckpt(self, bert_ckpt_path, args, finetune=False):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
         ckpt = torch.load(bert_ckpt_path, map_location=map_location)
-        base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
-        for k in list(base_ckpt.keys()):
-            if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
-                base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
-            elif k.startswith('base_model'):
-                base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
-            del base_ckpt[k]
+        if not finetune:
+            base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
+            for k in list(base_ckpt.keys()):
+                if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
+                    base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
+                elif k.startswith('base_model'):
+                    base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
+                del base_ckpt[k]
+        else:
+            base_ckpt = ckpt['base_model']
             
         incompatible = self.load_state_dict(base_ckpt, strict=False)
 
-        if incompatible.missing_keys:
+        if incompatible.missing_keys and torch.cuda.current_device() == 0:
             print_log('missing_keys', logger = 'Transformer')
             print_log(
                 get_missing_parameters_message(incompatible.missing_keys),
                 logger = 'Transformer'
             )
-        if incompatible.unexpected_keys:
+        if incompatible.unexpected_keys and torch.cuda.current_device() == 0:
             print_log('unexpected_keys', logger = 'Transformer')
             print_log(
                 get_unexpected_parameters_message(incompatible.unexpected_keys),
                 logger = 'Transformer'
             )
-
-        print_log(f'[Transformer] Successful Loading the ckpt from {bert_ckpt_path}', logger = 'Transformer')
+        if torch.cuda.current_device() == 0:
+            print_log(f'[Transformer] Successful Loading the ckpt from {bert_ckpt_path}', logger = 'Transformer')
     
     def _loss_caption(self, logits, target, mask):
         loss_per_word = nnf.cross_entropy(
