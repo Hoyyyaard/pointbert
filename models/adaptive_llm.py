@@ -68,6 +68,35 @@ class AdaptiveLLM(nn.Module):
         # with enable_wrap(wrapper_cls=FSDP, device_id=device_id):
         #     self.llm.model.layers = wrap(self.llm.model.layers)
     
+    def _find_all_linear_names(self, model):
+        cls = torch.nn.Linear
+        lora_module_names = set()
+        for name, module in model.named_modules():
+            if isinstance(module, cls):
+                names = name.split('.')
+                lora_module_names.add(names[0] if len(names) == 1 else names[-1])
+
+        if 'lm_head' in lora_module_names: # needed for 16-bit
+            lora_module_names.remove('lm_head')
+        return list(lora_module_names)
+    
+    def wrap_lora(self):
+        from peft import LoraConfig, get_peft_model
+        lora_r: int = 64
+        lora_alpha: int = 16
+        lora_dropout: float = 0.05
+        lora_bias = "none"
+        lora_config = LoraConfig(
+            r=lora_r,
+            lora_alpha=lora_alpha,
+            target_modules=self._find_all_linear_names(self.llm),
+            lora_dropout=lora_dropout,
+            bias=lora_bias,
+            task_type="CAUSAL_LM",
+        )
+        self.llm = get_peft_model(self.llm, lora_config)
+        print("Lora is enabled")
+    
     def load_model_from_ckpt(self, bert_ckpt_path, args, finetune=False):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
         ckpt = torch.load(bert_ckpt_path, map_location=map_location)
@@ -113,9 +142,14 @@ class AdaptiveLLM(nn.Module):
         with torch.no_grad():
                     
             points = data_dict['points']
-            num_group = data_dict['num_groups'][0].item()
-            group_size = data_dict['group_size'][0].item()
-            cls_tokens, encoder_tokens, center, neighborhood = self.encoder(points, num_group=num_group, group_size=group_size, forward_llm=True)
+            # num_group = data_dict['num_groups'][0].item()
+            # group_size = data_dict['group_size'][0].item()
+            
+            num_group = data_dict['num_groups']
+            group_size = data_dict['group_size']
+            level = data_dict['level']
+            
+            cls_tokens, encoder_tokens, center, neighborhood = self.encoder(points, num_group=num_group, group_size=group_size, level=level, forward_llm=True)
             # Concat cls_tokens and encoder_tokens
             cls_tokens = cls_tokens.unsqueeze(1)
             vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)

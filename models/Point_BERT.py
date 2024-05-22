@@ -205,13 +205,38 @@ class PointTransformer(nn.Module):
 
     def forward(self, pts, **kwargs):
         if not kwargs.get('num_group') is None:
-            self.group_divider.num_group = kwargs['num_group']
-            self.group_divider.group_size = kwargs['group_size']
-        
-        # divide the point clo  ud in the same form. This is important
-        neighborhood, center = self.group_divider(pts)
-        # encoder the input cloud blocks
-        group_input_tokens = self.encoder(neighborhood)  #  B G N
+            B = pts.shape[0]
+            ng = kwargs['num_group'][0].item()
+            levels = kwargs['level']
+            group_input_tokens = torch.zeros((B, ng, self.encoder_dims), device=pts.device, dtype=pts.dtype)
+            center = torch.zeros((B, ng, 3), device=pts.device, dtype=pts.dtype)
+            unique_group_size = torch.unique(kwargs['group_size'])
+            for gs in unique_group_size:
+                gs_index = torch.where(kwargs['group_size'] == gs)[0]
+                gs_pts = pts[gs_index] 
+                gs_level = levels[gs_index[0].item()]
+                # Deal with padding
+                if gs_level == 'scene':
+                    valid_pt_num = 40000
+                elif gs_level == 'instance':
+                    valid_pt_num = 1024
+                elif gs_level == 'region':
+                    valid_pt_num = 8192
+                
+                gs_pts = gs_pts[:, :valid_pt_num, :].contiguous()
+                    
+                self.group_divider.num_group = kwargs['num_group'][gs_index][0].item()
+                self.group_divider.group_size = gs.item()
+                neighborhood, gs_center = self.group_divider(gs_pts)
+                gs_group_input_tokens = self.encoder(neighborhood)  #  B G N
+                group_input_tokens[gs_index] = gs_group_input_tokens
+                center[gs_index] = gs_center
+        else:       
+            # divide the point clo  ud in the same form. This is important
+            neighborhood, center = self.group_divider(pts)
+            # encoder the input cloud blocks
+            group_input_tokens = self.encoder(neighborhood)  #  B G N
+            
         group_input_tokens = self.reduce_dim(group_input_tokens)
         # prepare cls
         cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)  

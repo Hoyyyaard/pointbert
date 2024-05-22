@@ -350,14 +350,6 @@ class SceneVerseDataset(Dataset):
     
     def __len__(self):
         return len(self.order_episodes)
-
-    def _padding_pointcloud(self, points):
-        PAD_DATA_NUM = 40000
-        pad_num = PAD_DATA_NUM - points.shape[0]
-        if pad_num > 0:
-            pad_points = np.ones((pad_num, 3))*(-100)
-            points = np.concatenate([points, pad_points], axis=0)
-        return points
     
     def __getitem__(self, index):
         
@@ -600,7 +592,14 @@ def visualization_pointclouds(pc, color):
     pcd.points = o3d.utility.Vector3dVector(pc)
     pcd.colors = o3d.utility.Vector3dVector(color)
     o3d.visualization.draw_geometries([pcd])
-    
+
+def _padding_pointcloud(points):
+    PAD_DATA_NUM = 40000
+    pad_num = PAD_DATA_NUM - points.shape[0]
+    if pad_num > 0:
+        pad_points = np.ones((pad_num, points.shape[-1]))*(-100)
+        points = np.concatenate([points, pad_points], axis=0)
+    return points
     
 @DATASETS.register_module()
 class SceneVerseLLMPretrainDataset(Dataset):
@@ -700,15 +699,15 @@ class SceneVerseLLMPretrainDataset(Dataset):
             # Process object caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
             # ~136k
             ## As HM3D only contains annotations from template like 'the pointcloud of xxx'
-            if dataset_name == 'HM3D':
-                continue
-            object_annos = annotations.get('object_caption')
-            for oa in object_annos:
-                scan_name = oa['scan_id']
-                # As some object instance pointcloud will miss after downsample, we only keep the object caption with pcd data large than threshold
-                if f'{dataset_name}_{scan_name}.pth_{oa["target_id"]}.npz' not in region_aug_pcd.keys():
-                    continue
-                self.all_object_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":oa, "task_name": "object_caption"})
+            # if dataset_name == 'HM3D':
+            #     continue
+            # object_annos = annotations.get('object_caption')
+            # for oa in object_annos:
+            #     scan_name = oa['scan_id']
+            #     # As some object instance pointcloud will miss after downsample, we only keep the object caption with pcd data large than threshold
+            #     if f'{dataset_name}_{scan_name}.pth_{oa["target_id"]}.npz' not in region_aug_pcd.keys():
+            #         continue
+            #     self.all_object_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":oa, "task_name": "object_caption"})
 
         # with open('data/SceneVerse/valid_region_relation_path.json', 'w') as f:
         #     json.dump(valid_region_relation_path, f)
@@ -783,16 +782,16 @@ class SceneVerseLLMPretrainDataset(Dataset):
     
         random.seed(0)
         self.all_relation_caption.extend(instance_filter_relation_caption)
-        random.shuffle(self.all_scene_caption)
-        random.shuffle(self.all_relation_caption)
-        random.shuffle(self.all_object_caption)
+        # random.shuffle(self.all_scene_caption)
+        # random.shuffle(self.all_relation_caption)
+        # random.shuffle(self.all_object_caption)
         # Expand to balance data after shuffle to ensure train and val split have different data
         # if config.subset == 'train':
         #     self.all_scene_caption = self.all_scene_caption * 2
         
-        dist.broadcast_object_list(self.all_scene_caption, src=0)
-        dist.broadcast_object_list(self.all_relation_caption, src=0)
-        dist.broadcast_object_list(self.all_object_caption, src=0)
+        # dist.broadcast_object_list(self.all_scene_caption, src=0)
+        # dist.broadcast_object_list(self.all_relation_caption, src=0)
+        # dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
             self.all_scene_caption = self.all_scene_caption[:-2000]
@@ -833,37 +832,44 @@ class SceneVerseLLMPretrainDataset(Dataset):
         
         # As diffent dataset has different number of points, we need to specify the dataset squence order 
         # to make sure samples from on batch come from the same level dataset
-        batch_size_pre_rank = config.tbs
+        # batch_size_pre_rank = config.tbs
         self.order_episodes = []
         self.order_levels = []
+        self.order_episodes.extend(self.all_scene_caption)
+        self.order_levels.extend(['scene'] * len(self.all_scene_caption))
+        self.order_episodes.extend(self.all_relation_caption)
+        self.order_levels.extend(['region'] * len(self.all_relation_caption))
+        self.order_episodes.extend(self.all_object_caption)
+        self.order_levels.extend(['instance'] * len(self.all_object_caption))       
         
-        while self.all_scene_caption or self.all_relation_caption or self.all_object_caption:
-            if self.all_scene_caption:
-                if len(self.all_scene_caption) < batch_size_pre_rank:
-                    pop_num  = len(self.all_scene_caption)
-                    [self.all_scene_caption.pop(0) for _ in range(pop_num)]
-                else:
-                    self.order_episodes.extend([self.all_scene_caption.pop(0) for _ in range(batch_size_pre_rank)])
-                    self.order_levels.extend(['scene'] * batch_size_pre_rank)
-            if self.all_relation_caption:
-                if len(self.all_relation_caption) < batch_size_pre_rank:
-                    pop_num  = len(self.all_relation_caption)
-                    [self.all_relation_caption.pop(0) for _ in range(pop_num)]
-                else:
-                    self.order_episodes.extend([self.all_relation_caption.pop(0) for _ in range(batch_size_pre_rank)])
-                    self.order_levels.extend(['region'] * batch_size_pre_rank)
-            if self.all_object_caption:
-                if len(self.all_object_caption) < batch_size_pre_rank:
-                    pop_num  = len(self.all_object_caption)
-                    [self.all_object_caption.pop(0) for _ in range(pop_num)]
-                else:
-                    self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
-                    self.order_levels.extend(['instance'] * batch_size_pre_rank)
+        
+        # while self.all_scene_caption or self.all_relation_caption or self.all_object_caption:
+        #     if self.all_scene_caption:
+        #         if len(self.all_scene_caption) < batch_size_pre_rank:
+        #             pop_num  = len(self.all_scene_caption)
+        #             [self.all_scene_caption.pop(0) for _ in range(pop_num)]
+        #         else:
+        #             self.order_episodes.extend([self.all_scene_caption.pop(0) for _ in range(batch_size_pre_rank)])
+        #             self.order_levels.extend(['scene'] * batch_size_pre_rank)
+        #     if self.all_relation_caption:
+        #         if len(self.all_relation_caption) < batch_size_pre_rank:
+        #             pop_num  = len(self.all_relation_caption)
+        #             [self.all_relation_caption.pop(0) for _ in range(pop_num)]
+        #         else:
+        #             self.order_episodes.extend([self.all_relation_caption.pop(0) for _ in range(batch_size_pre_rank)])
+        #             self.order_levels.extend(['region'] * batch_size_pre_rank)
+        #     if self.all_object_caption:
+        #         if len(self.all_object_caption) < batch_size_pre_rank:
+        #             pop_num  = len(self.all_object_caption)
+        #             [self.all_object_caption.pop(0) for _ in range(pop_num)]
+        #         else:
+        #             self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
+        #             self.order_levels.extend(['instance'] * batch_size_pre_rank)
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
-        # Reverse the list to ensure that the data in the final stage comes evenly from different levels of the dataset
-        self.order_episodes = self.order_episodes[::-1]
-        self.order_levels = self.order_levels[::-1]
+        # # Reverse the list to ensure that the data in the final stage comes evenly from different levels of the dataset
+        # self.order_episodes = self.order_episodes[::-1]
+        # self.order_levels = self.order_levels[::-1]
        
     def _load_annotation(self, annotation_path):
         dataset_name_to_annotation = {
@@ -1118,9 +1124,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 # Concat xyz with rgb
                 points = np.concatenate([points, colors/255], 1)
                 
+                points = _padding_pointcloud(points)
+                
                 ret_dict = {
                     'points': points.astype(np.float32),
-                    'colors': colors.astype(np.float32),
+                    # 'colors': colors.astype(np.float32),
                     'num_groups': self._num_groups,
                     'group_size': self._group_size,
                     'dataset_name': dataset_name,
@@ -1180,10 +1188,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 
                 # Concat xyz with rgb
                 points = np.concatenate([points, colors/255], 1)
+                points = _padding_pointcloud(points)
                 
                 ret_dict = {
                     'points': points.astype(np.float32),
-                    'colors': colors.astype(np.float32),
+                    # 'colors': colors.astype(np.float32),
                     'num_groups': self._num_groups,
                     'group_size': self._group_size,
                     'dataset_name': dataset_name,
@@ -1224,19 +1233,6 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             # Concat xyz with rgb
             points = np.concatenate([points, colors/255], 1)
-            
-            ret_dict = {
-                'points': points.astype(np.float32),
-                'colors': colors.astype(np.float32),
-                'num_groups': self._region_num_groups,
-                'group_size': self._region_group_size,
-                'dataset_name': dataset_name,
-                'level': level,
-                'scan_name': scan_name,
-                'task_name': task_name,
-                'episode_id': data['episode_id']
-            }
-            
             answers = anno['utterance']
             
             # Add bbox after the instance
@@ -1258,6 +1254,20 @@ class SceneVerseLLMPretrainDataset(Dataset):
             [' '.join((intruction, answers, self.tokenizer.eos_token))],
             **self.tokenizer_config
             )
+            
+            points = _padding_pointcloud(points)
+            
+            ret_dict = {
+                'points': points.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
+                'num_groups': self._region_num_groups,
+                'group_size': self._region_group_size,
+                'dataset_name': dataset_name,
+                'level': level,
+                'scan_name': scan_name,
+                'task_name': task_name,
+                'episode_id': data['episode_id']
+            }
             
             ret_dict['answers'] = answers
             ret_dict['question'] = intruction
@@ -1292,10 +1302,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             # Concat xyz with rgb
             points = np.concatenate([points, colors/255], 1)
+            points = _padding_pointcloud(points)
             
             ret_dict = {
                 'points': points.astype(np.float32),
-                'colors': colors.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
                 'num_groups': self._instance_num_groups,
                 'group_size': self._instance_group_size,
                 'dataset_name': dataset_name,
@@ -1499,38 +1510,44 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             'scene_understanding': copy.deepcopy(self.all_scene_understanding)
         }
         
+        # Debug
+        # self.all_scene_qa = self.all_scene_qa[:100]
+        # self.all_scene_understanding = self.all_scene_understanding[:100]
+        # self.all_object_grouding = self.all_object_grouding[:100]
+        
         all_scene_level_data = []
         all_scene_level_data.extend(self.all_scene_qa)
         all_scene_level_data.extend(self.all_scene_understanding)
         all_scene_level_data.extend(self.all_object_grouding)
-        random.shuffle(all_scene_level_data)
-        dist.broadcast_object_list(all_scene_level_data, src=0)
-        random.shuffle(self.all_object_caption)
-        dist.broadcast_object_list(self.all_object_caption, src=0)
-        batch_size_pre_rank = config.tbs
-        self.order_episodes = []
-        while all_scene_level_data or self.all_object_caption:
-            if self.all_object_caption:
-                if len(self.all_object_caption) < batch_size_pre_rank:
-                    pop_num  = len(self.all_object_caption)
-                    [self.all_object_caption.pop(0) for _ in range(pop_num)]
-                else:
-                    self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
-            if all_scene_level_data:
-                if len(all_scene_level_data) < batch_size_pre_rank:
-                    pop_num  = len(all_scene_level_data)
-                    [all_scene_level_data.pop(0) for _ in range(pop_num)]
-                else:
-                    self.order_episodes.extend([all_scene_level_data.pop(0) for _ in range(batch_size_pre_rank)])
         
-        self.order_episodes = self.order_episodes[::-1]
-        
+        # random.shuffle(all_scene_level_data)
+        # dist.broadcast_object_list(all_scene_level_data, src=0)
+        # random.shuffle(self.all_object_caption)
+        # dist.broadcast_object_list(self.all_object_caption, src=0)
+        # batch_size_pre_rank = config.tbs
         # self.order_episodes = []
-        # self.order_episodes.extend(self.all_scene_qa)
-        # self.order_episodes.extend(self.all_object_caption)
-        # self.order_episodes.extend(self.all_scene_understanding)
-        # if hasattr(self, 'all_object_grouding'):
-        #     self.order_episodes.extend(self.all_object_grouding)
+        # while all_scene_level_data or self.all_object_caption:
+        #     if self.all_object_caption:
+        #         if len(self.all_object_caption) < batch_size_pre_rank:
+        #             pop_num  = len(self.all_object_caption)
+        #             [self.all_object_caption.pop(0) for _ in range(pop_num)]
+        #         else:
+        #             self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
+        #     if all_scene_level_data:
+        #         if len(all_scene_level_data) < batch_size_pre_rank:
+        #             pop_num  = len(all_scene_level_data)
+        #             [all_scene_level_data.pop(0) for _ in range(pop_num)]
+        #         else:
+        #             self.order_episodes.extend([all_scene_level_data.pop(0) for _ in range(batch_size_pre_rank)])
+        
+        # self.order_episodes = self.order_episodes[::-1]
+        
+        self.order_episodes = []
+        self.order_episodes.extend(self.all_scene_qa)
+        self.order_episodes.extend(self.all_object_caption)
+        self.order_episodes.extend(self.all_scene_understanding)
+        if hasattr(self, 'all_object_grouding'):
+            self.order_episodes.extend(self.all_object_grouding)
             
         # Add Unique ID for each episode
         # episode_id = 0
@@ -1687,10 +1704,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             points = self.pc_norm(points)
             
             points = np.concatenate([points, colors/255], 1)
+            points = _padding_pointcloud(points)
             
             ret_dict = {
                 'points': points.astype(np.float32),
-                'colors': colors.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
                 'num_groups': self._num_groups,
                 'group_size': self._group_size,
                 'dataset_name': dataset_name,
@@ -1729,10 +1747,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             points = self.pc_norm(points)
             
             points = np.concatenate([points, colors/255], 1)
+            points = _padding_pointcloud(points)
             
             ret_dict = {
                 'points': points.astype(np.float32),
-                'colors': colors.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
                 'num_groups': self._num_groups,
                 'group_size': self._group_size,
                 'dataset_name': dataset_name,
@@ -1774,10 +1793,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             points = self.pc_norm(points)
             
             points = np.concatenate([points, colors/255], 1)
+            points = _padding_pointcloud(points)
             
             ret_dict = {
                 'points': points.astype(np.float32),
-                'colors': colors.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
                 'num_groups': self._instance_num_groups,
                 'group_size': self._instance_group_size,
                 'dataset_name': dataset_name,
@@ -1853,10 +1873,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             bbox_str = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
             
             points = np.concatenate([points, colors/255], 1)
+            points = _padding_pointcloud(points)
             
             ret_dict = {
                 'points': points.astype(np.float32),
-                'colors': colors.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
                 'num_groups': self._num_groups,
                 'group_size': self._group_size,
                 'dataset_name': dataset_name,

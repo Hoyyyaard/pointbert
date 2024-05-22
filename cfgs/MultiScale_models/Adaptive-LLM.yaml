@@ -16,13 +16,13 @@ scheduler: {
 
 dataset : {
   train : { _base_: cfgs/dataset_configs/SceneVerseLLMPretrainDataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: False}},
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
   val : { _base_: cfgs/dataset_configs/SceneVerseLLMPretrainDataset.yaml, 
             others: {subset: 'val', shuffle: False}}}
 model : {
   NAME: PointTransformer, 
 
-  quantization: True, 
+  quantization: False, 
 
   trans_dim: 384, 
   depth: 12, 
@@ -35,8 +35,8 @@ model : {
 }
 
 
-total_bs : 120
-step_per_update : 3
+total_bs : 60
+step_per_update : 1
 max_epoch : 5
 
 consider_metric: CDL1

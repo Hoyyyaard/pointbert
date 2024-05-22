@@ -93,26 +93,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
             print_log('Training from scratch', logger = logger)
     # print(torch.cuda.memory_summary())
 
-    if not finetune:
-        for n, p in base_model.llm.named_parameters():
-            p.requires_grad = False
-        for n, p in base_model.encoder.named_parameters():
-            p.requires_grad = False
-        if torch.cuda.current_device() == 0:
-            print_log("Trainable parameters")
-            for n, p in base_model.module.named_parameters():
-                if p.requires_grad:
-                    print_log(n)
-    else:
-        for n, p in base_model.llm.named_parameters():
-            p.requires_grad = True
-        for n, p in base_model.encoder.named_parameters():
-            p.requires_grad = False
-        print_log("Trainable parameters")
-        if torch.cuda.current_device() == 0:
-            for n, p in base_model.named_parameters():
-                if p.requires_grad:
-                    print_log(n)
     
     # DDP
     # Debug
@@ -122,16 +102,39 @@ def run_net(args, config, train_writer=None, val_writer=None):
             base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
             print_log('Using Synchronized BatchNorm ...', logger = logger)
         if finetune:
-            base_model.wrap_fsdp()
-            print_log('Using FSDP to fully finetune LLM')
-        else:
-            base_model = nn.parallel.DistributedDataParallel(base_model, 
-                                                            device_ids=[args.local_rank % torch.cuda.device_count()], 
-                                                            find_unused_parameters=True if not finetune else False,)
-            print_log('Using Distributed Data parallel ...' , logger = logger)
+            # base_model.wrap_fsdp()
+            # print_log('Using FSDP to fully finetune LLM')
+            base_model.wrap_lora()
+        
+        base_model = nn.parallel.DistributedDataParallel(base_model, 
+                                                        device_ids=[args.local_rank % torch.cuda.device_count()], 
+                                                        find_unused_parameters=True if not finetune else False,)
+        print_log('Using Distributed Data parallel ...' , logger = logger)
     else:
         print_log('Using Data parallel ...' , logger = logger)
         base_model = nn.DataParallel(base_model).cuda()
+        
+        
+    if not finetune:
+        # for n, p in base_model.llm.named_parameters():
+        #     p.requires_grad = False
+        for n, p in base_model.module.encoder.named_parameters():
+            p.requires_grad = False
+        if torch.cuda.current_device() == 0:
+            print_log("Trainable parameters")
+            for n, p in base_model.module.named_parameters():
+                if p.requires_grad:
+                    print_log(n)
+    else:
+        for n, p in base_model.module.llm.named_parameters():
+            p.requires_grad = True
+        for n, p in base_model.module.encoder.named_parameters():
+            p.requires_grad = False
+        print_log("Trainable parameters")
+        if torch.cuda.current_device() == 0:
+            for n, p in base_model.module.named_parameters():
+                if p.requires_grad:
+                    print_log(n)
     
     # print(torch.cuda.memory_summary())
     
@@ -197,7 +200,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                         assert False
             
             # Debug
-            # break
 
             data_time.update(time.time() - batch_start_time)
 
@@ -290,6 +292,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
             (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)
 
         # Debug
+        barrier()
         # metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
         builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
         if epoch % args.val_freq == 0 and not finetune:
