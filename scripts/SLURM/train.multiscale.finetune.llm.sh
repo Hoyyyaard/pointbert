@@ -54,5 +54,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune.yaml \
     --exp_name 0521_MultiScale_LLM_Finetune \
     --ckpt experiments/Adaptive-LLM/MultiScale_models/0522_MultiScale_LLM_Pretrain/ckpt-last.pth \
-    # --resume  
+    --resume  
 

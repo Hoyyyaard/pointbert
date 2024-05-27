@@ -45,10 +45,10 @@ model : {
     tokens_dims: 256, 
     decoder_dims: 256, 
     has_level: True,
-    ckpt: experiments/dvae/MultiScale_models/0519_Multiscale_Dvae_Wlevelmlp_WRgb/ckpt-best.pth # set the dVAE weight here
+    ckpt: experiments/dvae/MultiScale_models/0526_Multiscale_Dvae_Wlevelmlp_WRGB/ckpt-epoch-300.pth # set the dVAE weight here
   }}
 
-total_bs : 512
+total_bs : 1024
 step_per_update : 3
 max_epoch : 300
 

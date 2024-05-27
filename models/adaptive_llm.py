@@ -8,11 +8,6 @@ from transformers import AutoTokenizer
 from tools.generation_utils import generation
 from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp.wrap import (
-    enable_wrap,
-    wrap,
-)
 
 class AdaptiveLLM(nn.Module):
     def __init__(self, llm_config, encoder_config):
@@ -50,7 +45,7 @@ class AdaptiveLLM(nn.Module):
         self.encoder = PointTransformer(self._encoder_config)
         
         self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.trans_dim, self._llm_config.hidden_size),
+            nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             nn.ReLU(),
@@ -59,6 +54,11 @@ class AdaptiveLLM(nn.Module):
         )
         
     def wrap_fsdp(self):
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        from torch.distributed.fsdp.wrap import (
+            enable_wrap,
+            wrap,
+        )
         tmp_module_list = []
         for li,layer in enumerate(self.llm.model.layers):
             with enable_wrap(wrapper_cls=FSDP, device_id=torch.cuda.current_device()):
@@ -145,18 +145,21 @@ class AdaptiveLLM(nn.Module):
             # num_group = data_dict['num_groups'][0].item()
             # group_size = data_dict['group_size'][0].item()
             
+            # TODO
             num_group = data_dict['num_groups']
             group_size = data_dict['group_size']
             level = data_dict['level']
             
-            cls_tokens, encoder_tokens, center, neighborhood = self.encoder(points, num_group=num_group, group_size=group_size, level=level, forward_llm=True)
+            cls_tokens, encoder_tokens, center = self.encoder(points, num_group=num_group, group_size=group_size, level=level, forward_llm=True)
             # Concat cls_tokens and encoder_tokens
             cls_tokens = cls_tokens.unsqueeze(1)
             vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
+            
+            # Only use cls token
+            # vision_embed = torch.cat([cls_tokens, encoder_tokens.max(1)[0]], dim = -1).unsqueeze(1)
         
         vision_embed.requires_grad_(True)
         vision_embed = self.encoder_to_llm_projection(vision_embed)
-        
         embedding_layer = self.llm.get_input_embeddings()
         
         if not eval:

@@ -250,10 +250,36 @@ class PointTransformer(nn.Module):
         x = self.blocks(x, pos)
         x = self.norm(x)
         if not kwargs.get('forward_llm') is None:
-            return x[:, 0], x[:, 1:], center, neighborhood
+            return x[:, 0], x[:, 1:], center
             
         concat_f = torch.cat([x[:,0], x[:, 1:].max(1)[0]], dim = -1)
         ret = self.cls_head_finetune(concat_f)
+        # TODO
+        # if not kwargs.get('num_group') is None:
+        #     self.group_divider.num_group = kwargs['num_group']
+        #     self.group_divider.group_size = kwargs['group_size']
+        
+        # # divide the point clo  ud in the same form. This is important
+        # neighborhood, center = self.group_divider(pts)
+        # # encoder the input cloud blocks
+        # group_input_tokens = self.encoder(neighborhood)  #  B G N
+        # group_input_tokens = self.reduce_dim(group_input_tokens)
+        # # prepare cls
+        # cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)  
+        # cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)  
+        # # add pos embedding
+        # pos = self.pos_embed(center)
+        # # final input
+        # x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        # pos = torch.cat((cls_pos, pos), dim=1)
+        # # transformer
+        # x = self.blocks(x, pos)
+        # x = self.norm(x)
+        # if not kwargs.get('forward_llm') is None:
+        #     return x[:, 0], x[:, 1:], center, neighborhood
+            
+        # concat_f = torch.cat([x[:,0], x[:, 1:].max(1)[0]], dim = -1)
+        # ret = self.cls_head_finetune(concat_f)
         return ret
 
 class MaskTransformer(nn.Module):

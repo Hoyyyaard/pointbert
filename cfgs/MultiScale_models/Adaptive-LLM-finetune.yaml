@@ -1,7 +1,7 @@
 optimizer : {
   type: Adam,
   kwargs: {
-  lr : 0.00003, 
+  lr : 0.0001, 
   weight_decay : 0.05,
 
 }}
@@ -10,7 +10,7 @@ scheduler: {
   type: CosLR,
   kwargs: {
     epochs: 5,
-    initial_epochs : 0
+    initial_epochs : 0.1
 }}
 
 dataset : {
@@ -34,7 +34,7 @@ model : {
 }
 
 finetune : True
-total_bs : 2
+total_bs : 60
 step_per_update : 1
 max_epoch : 5
 
