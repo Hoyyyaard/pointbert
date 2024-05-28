@@ -57,14 +57,24 @@ class AdaptiveLLM(nn.Module):
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
         from torch.distributed.fsdp.wrap import (
             enable_wrap,
+            transformer_auto_wrap_policy,
             wrap,
         )
-        tmp_module_list = []
-        for li,layer in enumerate(self.llm.model.layers):
-            with enable_wrap(wrapper_cls=FSDP, device_id=torch.cuda.current_device()):
-                tmp_module_list.append(wrap(layer))    
-        tmp_module_list = nn.ModuleList(tmp_module_list)
-        setattr(self.llm.model, 'layers', tmp_module_list)
+        import functools
+        from models.modeling_llama import LlamaDecoderLayer
+        llama_auto_wrap_policy = functools.partial(
+            transformer_auto_wrap_policy,
+            transformer_layer_cls={
+                LlamaDecoderLayer,
+            },
+        )
+        self.llm = FSDP(self.llm, device_id=torch.cuda.current_device(), auto_wrap_policy=llama_auto_wrap_policy)
+        # tmp_module_list = []
+        # for li,layer in enumerate(self.llm.model.layers):
+        #     with enable_wrap(wrapper_cls=FSDP, device_id=torch.cuda.current_device()):
+        #         tmp_module_list.append(wrap(layer))    
+        # tmp_module_list = nn.ModuleList(tmp_module_list)
+        # setattr(self.llm.model, 'layers', tmp_module_list)
         # with enable_wrap(wrapper_cls=FSDP, device_id=device_id):
         #     self.llm.model.layers = wrap(self.llm.model.layers)
     
@@ -156,25 +166,47 @@ class AdaptiveLLM(nn.Module):
             vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
             
             # Only use cls token
-            # vision_embed = torch.cat([cls_tokens, encoder_tokens.max(1)[0]], dim = -1).unsqueeze(1)
+            # vision_embed = torch.cat([], dim = -1).unsqueeze(1)
+        
+        # Find "instance" in level and use avg feature to represent instance
+        # instance_indices = [i for i, x in enumerate(level) if x == 'instance']
+        # if len(instance_indices) > 0:
+        #     vision_embed.requires_grad_(False)
+        #     instance_embed = vision_embed[instance_indices]
+        #     avg_instance_embed = (instance_embed[:, 0, :] + instance_embed[:, 1:, :].max(1)[0]).unsqueeze(1).repeat(1, vision_embed.shape[1], 1)
+        #     # padding_instance_embed = torch.zeros((avg_instance_embed.shape[0], vision_embed.shape[1]-1, vision_embed.shape[-1]), device=vision_embed.device)
+        #     # avg_instance_embed = torch.cat([avg_instance_embed, padding_instance_embed], dim=1)
+        #     vision_embed[instance_indices] = avg_instance_embed
+            
+        #     vision_mask = torch.ones_like(vision_embed[..., 0])
+        #     # vision_mask[instance_indices, 1:] = 0
+        # else:
+        vision_mask = torch.ones_like(vision_embed[..., 0])
         
         vision_embed.requires_grad_(True)
         vision_embed = self.encoder_to_llm_projection(vision_embed)
-        embedding_layer = self.llm.get_input_embeddings()
+        # embedding_layer = self.llm.get_input_embeddings()
         
         if not eval:
             
             input_mask = data_dict['attention_mask']
             input_ids = data_dict['input_ids']
-            vision_mask = torch.ones_like(vision_embed[..., 0])
+            
             # ---- batch x (ntoken + nword) x n_embd
-            inputs_embeds = torch.cat((vision_embed, embedding_layer(input_ids)), dim=1)
-            attention_mask = torch.cat((vision_mask, input_mask), dim=1)
+            # inputs_embeds = torch.cat((vision_embed, embedding_layer(input_ids)), dim=1)
+            # attention_mask = torch.cat((vision_mask, input_mask), dim=1)
             
             # Calculate llm loss
+            # outputs = self.llm(
+            #     inputs_embeds=inputs_embeds.to(self.dtype),
+            #     attention_mask=attention_mask.to(self.dtype),
+            #     output_attentions=False,
+            # )
             outputs = self.llm(
-                inputs_embeds=inputs_embeds.to(self.dtype),
-                attention_mask=attention_mask.to(self.dtype),
+                vision_embeds=vision_embed.to(self.dtype),
+                vision_mask=vision_mask.to(self.dtype),
+                input_ids=input_ids,
+                attention_mask=input_mask.to(self.dtype),
                 output_attentions=False,
             )
             
@@ -205,16 +237,26 @@ class AdaptiveLLM(nn.Module):
                 sample_instruction = instruction[batch_id]     
                 sample_mask = instruction_mask[batch_id]     # ntoken
                 
+                # output = generation(
+                #     self.llm, 
+                #     inputs_embeds=torch.cat(
+                #         [
+                #             vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype),   # 1 x nprefix x n_embd
+                #             embedding_layer(sample_instruction[sample_mask == 1]).unsqueeze(0).to(self.dtype)
+                #         ],
+                #         dim=1
+                #     ),
+                #     max_length=128,
+                #     **caption_config,
+                # )
+                vision_embed_per_batch = vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype)
                 output = generation(
                     self.llm, 
-                    inputs_embeds=torch.cat(
-                        [
-                            vision_embed[batch_id].unsqueeze(0).to(self.dtype),   # 1 x nprefix x n_embd
-                            embedding_layer(sample_instruction[sample_mask == 1]).unsqueeze(0).to(self.dtype)
-                        ],
-                        dim=1
-                    ),
-                    max_length=128,
+                    vision_embeds=vision_embed_per_batch,
+                    vision_mask=torch.ones_like(vision_embed_per_batch[..., 0], dtype=self.dtype),
+                    input_ids=sample_instruction[sample_mask == 1].unsqueeze(0),
+                    attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0), dtype=self.dtype),
+                    max_length=128,   
                     **caption_config,
                 )
                 output_ids.append(output['output_ids'])

@@ -6,8 +6,8 @@ ADDR=$1
 NGPUS=$3
 
 python -m torch.distributed.launch --master_addr ${ADDR} --master_port=${PORT} --nproc_per_node=${NGPUS} main_ALLM.py \
-    --launcher pytorch --sync_bn \
+    --launcher pytorch  \
     --config cfgs/MultiScale_models/Adaptive-LLM.yaml \
-    --exp_name pointbert_objaverse_TrainOnSceneData \
-    --ckpt ckpts/point_bert_v1.1.pt
+    --exp_name EqualData_ObjCls \
+    --ckpt experiments/Point-BERT/MultiScale_models/ckpt-best.pth
     # --resume

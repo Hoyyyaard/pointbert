@@ -42,17 +42,17 @@ echo "MASTER_PORT: $MASTER_PORT"
 
 if [ $FLAG -eq 1 ]; then
     NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/pointbert/bin/python -u -m torch.distributed.launch --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
 else
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/pointbert/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
 
 
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
-    --launcher slurm --sync_bn \
+    --launcher slurm  \
     --config cfgs/MultiScale_models/Adaptive-LLM.yaml \
-    --exp_name 0520_MultiScale_LLM_Pretrain \
+    --exp_name 0527_Pretrain_Batch_ClsObj_BeforeMLP \
     --ckpt experiments/Point-BERT/MultiScale_models/0519_Multiscale_Pointbert_Pretrain_WRgb/ckpt-best.pth \
     # --resume  
 

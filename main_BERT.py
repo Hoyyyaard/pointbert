@@ -48,9 +48,9 @@ def main():
         config.dataset.train.others.bs = config.total_bs // world_size
         config.dataset.train.others.tbs = config.total_bs
         if config.dataset.get('extra_train'):
-            config.dataset.extra_train.others.bs = config.total_bs // world_size * 2
-        config.dataset.val.others.bs = config.total_bs // world_size * 2
-        config.dataset.val.others.tbs = config.total_bs * 2
+            config.dataset.extra_train.others.bs = config.total_bs // world_size 
+        config.dataset.val.others.bs = config.total_bs // world_size
+        config.dataset.val.others.tbs = config.total_bs 
         if config.dataset.get('test'):
             config.dataset.test.others.bs = config.total_bs // world_size 
             config.dataset.test.others.tbs = config.total_bs
@@ -58,8 +58,8 @@ def main():
         config.dataset.train.others.bs = config.total_bs
         config.dataset.train.others.tbs = config.total_bs
         if config.dataset.get('extra_train'):
-            config.dataset.extra_train.others.bs = config.total_bs * 2
-        config.dataset.val.others.bs = config.total_bs * 2
+            config.dataset.extra_train.others.bs = config.total_bs 
+        config.dataset.val.others.bs = config.total_bs 
         config.dataset.val.others.tbs = config.total_bs
         if config.dataset.get('test'):
             config.dataset.test.others.bs = config.total_bs 

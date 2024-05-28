@@ -641,6 +641,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
+        vision_embeds: torch.FloatTensor = None,
+        vision_mask: torch.FloatTensor = None,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -677,6 +679,15 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you consciours? Can you talk to me?\nI'm not consciours, but I can talk to you."
         ```"""
+
+        if not vision_embeds is None:
+            embedding_layer = self.get_input_embeddings()
+            input_mask = attention_mask
+            input_ids = input_ids
+            
+            inputs_embeds = torch.cat((vision_embeds, embedding_layer(input_ids)), dim=1)
+            attention_mask = torch.cat((vision_mask, input_mask), dim=1)
+            input_ids = None
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (

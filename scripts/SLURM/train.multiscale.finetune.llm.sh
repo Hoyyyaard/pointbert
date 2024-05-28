@@ -3,7 +3,7 @@
 set -x
 
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -42,7 +42,7 @@ echo "MASTER_PORT: $MASTER_PORT"
 
 if [ $FLAG -eq 1 ]; then
     NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK --max_restarts 5"
 else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
@@ -50,9 +50,10 @@ fi
 
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
-    --launcher slurm --sync_bn \
+    --launcher slurm \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune.yaml \
-    --exp_name 0521_MultiScale_LLM_Finetune \
-    --ckpt experiments/Adaptive-LLM/MultiScale_models/0522_MultiScale_LLM_Pretrain/ckpt-last.pth \
-    --resume  
+    --exp_name 0526_MultiScale_LLM_Finetune_Batch_DownStreamData_FullyLLM_PretrainFrom[0523_MultiScale_LLM_Pretrain_EqualDate_DiffTaskPrompt_Batch] \
+    --ckpt experiments/Adaptive-LLM-finetune/MultiScale_models/0526_MultiScale_LLM_Finetune_Batch_DownStreamData_FullyLLM_PretrainFrom[0523_MultiScale_LLM_Pretrain_EqualDate_DiffTaskPrompt_Batch]/ckpt-last.pth --test \
+    # --ckpt experiments/Adaptive-LLM/MultiScale_models/0523_MultiScale_LLM_Pretrain_EqualDate_DiffTaskPrompt_Batch/ckpt-epoch-000.pth \
+    # --resume  
 

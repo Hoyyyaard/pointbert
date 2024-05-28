@@ -740,8 +740,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
         
         objaverse_objs = list(self.objaverse_data.obj_cap_dict.keys())
         random.shuffle(objaverse_objs)
-        dist.broadcast_object_list(objaverse_objs, src=0)
-        for obj_dict in objaverse_objs[:300000]:
+        # dist.broadcast_object_list(objaverse_objs, src=0)
+        for obj_dict in objaverse_objs[:100000]:
             self.all_object_caption.append({'dataset_name':'Objaverse', 
                                             "scan_name":obj_dict, 
                                             "task_name": "object_caption",
@@ -776,6 +776,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
                                                 }
                                             })
         self.all_scene_caption.extend(extend_leo_scene_caption)
+        if config.subset == 'train':
+            self.all_scene_caption = self.all_scene_caption * 2
         
         # Load some grouding scene caption data ~107k from GroundLLM https://arxiv.org/pdf/2405.10370
         # grounding_scene_caption_anno = json.load(open('data/SceneVerse/ScanNet/annotations/scene_caption/groundedscenecaption_format.json', 'r'))
@@ -800,12 +802,12 @@ class SceneVerseLLMPretrainDataset(Dataset):
         # dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
-            self.all_scene_caption = self.all_scene_caption[:-2000]
-            self.all_relation_caption = self.all_relation_caption[:-2000]
-            self.all_object_caption = self.all_object_caption[:-2000]
-            # self.all_scene_caption = self.all_scene_caption[:100000]
-            # self.all_relation_caption = self.all_relation_caption[:100000]
-            # self.all_object_caption = self.all_object_caption[:100000]
+            # self.all_scene_caption = self.all_scene_caption[:-2000]
+            # self.all_relation_caption = self.all_relation_caption[:-2000]
+            # self.all_object_caption = self.all_object_caption[:-2000]
+            self.all_scene_caption = self.all_scene_caption[:100000]
+            self.all_relation_caption = self.all_relation_caption[:100000]
+            self.all_object_caption = self.all_object_caption[:100000]
         else:
             # self.all_scene_caption = self.all_scene_caption[-2000:]
             # self.all_relation_caption = self.all_relation_caption[-2000:]
@@ -849,10 +851,10 @@ class SceneVerseLLMPretrainDataset(Dataset):
         # TODO
         self.order_episodes.extend(self.all_scene_caption)
         self.order_levels.extend(['scene'] * len(self.all_scene_caption))
-        # self.order_episodes.extend(self.all_relation_caption)
-        # self.order_levels.extend(['region'] * len(self.all_relation_caption))
-        # self.order_episodes.extend(self.all_object_caption)
-        # self.order_levels.extend(['instance'] * len(self.all_object_caption))       
+        self.order_episodes.extend(self.all_relation_caption)
+        self.order_levels.extend(['region'] * len(self.all_relation_caption))
+        self.order_episodes.extend(self.all_object_caption)
+        self.order_levels.extend(['instance'] * len(self.all_object_caption))       
         
         # TODO
         # As diffent dataset has different number of points, we need to specify the dataset squence order 

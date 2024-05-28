@@ -94,9 +94,9 @@ def run_net(args, config, train_writer=None, val_writer=None):
     metrics = Acc_Metric(0.)
 
     if finetune:
-        # base_model.wrap_fsdp()
-        # print_log('Using FSDP to fully finetune LLM')
-        base_model.wrap_lora()
+        base_model.wrap_fsdp()
+        print_log('Using FSDP to fully finetune LLM')
+        # base_model.wrap_lora()
     
     # resume ckpts
     if args.resume:
@@ -111,26 +111,31 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
     
     # DDP
-    # Debug
     if args.distributed:
         # Sync BN
         if args.sync_bn:
             base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
             print_log('Using Synchronized BatchNorm ...', logger = logger)
-        
-        base_model = nn.parallel.DistributedDataParallel(base_model, 
-                                                        device_ids=[args.local_rank % torch.cuda.device_count()]
-                                                        )
-        print_log('Using Distributed Data parallel ...' , logger = logger)
+        if not finetune:
+            base_model = nn.parallel.DistributedDataParallel(base_model, 
+                                                            device_ids=[args.local_rank % torch.cuda.device_count()]
+                                                            )
+            print_log('Using Distributed Data parallel ...' , logger = logger)
     else:
         print_log('Using Data parallel ...' , logger = logger)
         base_model = nn.DataParallel(base_model).cuda()
         
     print_log("Trainable parameters")
-    if torch.cuda.current_device() == 0:
-        for n, p in base_model.module.named_parameters():
-            if p.requires_grad:
-                print_log(n)
+    if not finetune:
+        if torch.cuda.current_device() == 0:
+            for n, p in base_model.module.named_parameters():
+                if p.requires_grad:
+                    print_log(n)
+    else:
+        if torch.cuda.current_device() == 0:
+            for n, p in base_model.named_parameters():
+                if p.requires_grad:
+                    print_log(n)
     
     # print(torch.cuda.memory_summary())
     
@@ -140,23 +145,10 @@ def run_net(args, config, train_writer=None, val_writer=None):
     
     if args.resume:
         builder.resume_optimizer(optimizer, args, logger = logger)
-
-    # Update learning rate at each step
-    # opti_config = config.optimizer
-    # sche_config = config.scheduler
-    # total_epochs = sche_config.kwargs.epochs
-    # warmup_ratio = opti_config.kwargs.warmup_ratio  # Warmup ratio of 3%
-    # initial_lr = opti_config.kwargs.lr  # Initial learning rate
-    # warmup_lr = 1e-6
-
-    # Define scheduler with warmup
-    # total_steps = len(train_dataloader) * total_epochs
-    # warmup_steps = int(total_steps * warmup_ratio)
     
     # 启用自动微分异常检测
     # torch.autograd.set_detect_anomaly(True)
     
-    # trainval
     # training
     max_tolerant_nan = 5
     curr_nan_times = 0
@@ -204,11 +196,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
             # assert points.size(1) == npoints
             # As we have some grouding episode which do not suitable for pointcloud aug
             # points = train_transforms(points)
-            try:
-                loss = base_model(data_dict)
-            except Exception as e:
-                print(e)
-                continue
+            loss = base_model(data_dict)
             dist.all_reduce(loss, op=dist.ReduceOp.SUM)
             loss = loss / dist.get_world_size() 
             
@@ -222,7 +210,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
                     exit(-1)
             loss.backward()
             curr_nan_times = 0
-            torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=1)
+            # torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=1)
                 
                 # for name, param in base_model.module.named_parameters():
                 #     if torch.isnan(param).any():
@@ -281,6 +269,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
             # else:
             #     optimizer.param_groups[0]['lr'] =  0.5 * (math.cos((lr_step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
 
+            break
         
         epoch_end_time = time.time()
 
@@ -369,6 +358,9 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
     test_pbar = tqdm(total = len(test_dataloader))
     with torch.no_grad():
         for idx, data_dict in enumerate(test_dataloader):
+            
+            print(f"Rank {args.local_rank} evaling")
+            
             test_pbar.update(1)
             
             for k,v in data_dict.items():
@@ -376,7 +368,7 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                     data_dict[k] = v.cuda()
                     
             output_ids = base_model(data_dict, eval=True)
-            
+            print(f"Rank {args.local_rank} finish evaling")
             outputs = dict(
                 output_ids=output_ids,
             )
@@ -390,11 +382,18 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                     gather_data_dict[k] = [item for sublist in zip(*v) for item in sublist]
             
             output_ids = outputs["output_ids"]  # batch x max_length
-            answers = base_model.module.tokenizer.batch_decode(
-                output_ids,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False
-            )
+            if finetune:
+                answers = base_model.module.tokenizer.batch_decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )
+            else:
+                answers = base_model.tokenizer.batch_decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )
             
             for idx in range(output_ids.shape[0]):
                 key = gather_data_dict['episode_id'][idx].item()

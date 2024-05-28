@@ -8,23 +8,35 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
     
     ## prepare inputs
     max_length = kwargs['max_length']
-    inputs_embeds = kwargs['inputs_embeds'] # batch x nwords x channel
+    inputs_embeds = kwargs.get('inputs_embeds') # batch x nwords x channel
+    input_ids = kwargs.get('input_ids')
+    vision_embeds = kwargs.get('vision_embeds')
+    attention_mask = kwargs.get('attention_mask')
+    vision_mask = kwargs.get('vision_mask')
     
-    batch, _, channel = inputs_embeds.shape
+    batch, _ = input_ids.shape
     
     ## prepare storage
-    output_ids = torch.ones(batch, max_length).long().to(inputs_embeds.device)
+    output_ids = torch.ones(batch, max_length).long().to(vision_embeds.device)
     output_ids = output_ids * kwargs['eos_token_id']
     
     ## prepare temporal storage of inputs
-    temporal_inputs = inputs_embeds
-    finished_batchs = torch.zeros(batch).bool().to(inputs_embeds.device)
-    embedding_layer = transformer.get_input_embeddings()
+    # temporal_inputs = inputs_embeds
+    finished_batchs = torch.zeros(batch).bool().to(vision_embeds.device)
+    # embedding_layer = transformer.get_input_embeddings()
     for word_id in range(max_length):
         
+        # step_output = transformer(
+        #     inputs_embeds=temporal_inputs,
+        #     output_attentions=False,
+        # )
+
         step_output = transformer(
-            inputs_embeds=temporal_inputs,
-            output_attentions=True,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            vision_embeds=vision_embeds,
+            vision_mask=vision_mask,
+            output_attentions=False,
         )
         
         ## greedy decoding, find out whats the most possible word
@@ -36,7 +48,9 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         
         output_ids[:, word_id] = next_word_id.long()    # (batch, )
         
-        temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
+        input_ids = torch.cat((input_ids, next_word_id.unsqueeze(1)), dim=1)
+        attention_mask = torch.cat((attention_mask, torch.ones(batch, 1).to(attention_mask.device)), dim=1)
+        # temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
         
     return OrderedDict({'output_ids': output_ids.long(), 'attentions': step_output.get('attentions', None)})
 
@@ -199,14 +213,14 @@ def generation(transformer: Callable, **kwargs):
     inputs_embeds = kwargs.get('inputs_embeds', None)
     embedding_layer = transformer.get_input_embeddings()
     
-    if inputs_embeds is not None:
-        assert input_ids is None, (
-            'for safety issues, inputs_embeds is prior to input_ids!'
-        )
-    elif input_ids is not None:
-        kwargs['inputs_embeds'] = embedding_layer(input_ids)
-    else:
-        raise NotImplementedError
+    # if inputs_embeds is not None:
+    #     assert input_ids is None, (
+    #         'for safety issues, inputs_embeds is prior to input_ids!'
+    #     )
+    # elif input_ids is not None:
+    #     kwargs['inputs_embeds'] = embedding_layer(input_ids)
+    # else:
+    #     raise NotImplementedError
     
     if kwargs['num_beams'] is None:
         # batch x max_length
