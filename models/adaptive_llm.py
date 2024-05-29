@@ -52,6 +52,7 @@ class AdaptiveLLM(nn.Module):
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             nn.ReLU(),
         )
+        self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
         
     def wrap_fsdp(self):
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -184,6 +185,7 @@ class AdaptiveLLM(nn.Module):
         vision_mask = torch.ones_like(vision_embed[..., 0])
         
         vision_embed.requires_grad_(True)
+        vision_embed = vision_embed.to(self.dtype)
         vision_embed = self.encoder_to_llm_projection(vision_embed)
         # embedding_layer = self.llm.get_input_embeddings()
         
@@ -203,7 +205,7 @@ class AdaptiveLLM(nn.Module):
             #     output_attentions=False,
             # )
             outputs = self.llm(
-                vision_embeds=vision_embed.to(self.dtype),
+                vision_embeds=vision_embed,
                 vision_mask=vision_mask.to(self.dtype),
                 input_ids=input_ids,
                 attention_mask=input_mask.to(self.dtype),

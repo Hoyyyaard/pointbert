@@ -210,7 +210,11 @@ def run_net(args, config, train_writer=None, val_writer=None):
                     exit(-1)
             loss.backward()
             curr_nan_times = 0
-            # torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=1)
+            
+            if not finetune:
+                torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=10)
+            else:
+                torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=10)
                 
                 # for name, param in base_model.module.named_parameters():
                 #     if torch.isnan(param).any():
@@ -222,6 +226,10 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 optimizer.step()
                 base_model.zero_grad()
                 
+            for n,p in base_model.module.named_parameters():
+                if torch.isnan(p).any():
+                    print(n)
+                    
             acc_step = int(len(train_dataloader) * epoch + idx)
             if isinstance(scheduler, list):
                 for item in scheduler:
@@ -262,15 +270,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 print_log(f'ETA: {eta_str}', logger = logger)
             
               
-            # Define lambda function for warmup scheduler
-            # lr_step = epoch * len(train_dataloader) + idx
-            # if lr_step < warmup_steps:
-            #     optimizer.param_groups[0]['lr'] =  warmup_lr 
-            # else:
-            #     optimizer.param_groups[0]['lr'] =  0.5 * (math.cos((lr_step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
-
-            break
-        
         epoch_end_time = time.time()
 
         if train_writer is not None:
