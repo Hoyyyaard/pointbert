@@ -8,6 +8,24 @@ from transformers import AutoTokenizer
 from tools.generation_utils import generation
 from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
+from models.dvae import Group
+
+class OpensceneEncoder(nn.Module):
+    def __init__(self, encoder_config):
+        super(OpensceneEncoder, self).__init__()
+        self.encoder_config = encoder_config
+        self.openscene_features_base_dir = encoder_config.openscene_features_base_dir
+        # As different levels have different number of groups, we temporally set num_group and group_size to -1
+        self.pointcloud_tokenizer = Group(num_group=-1, group_size=-1)
+        self.level_group_map = {
+            'scene': (self.encoder_config.NUM_GROUP, self.encoder_config.GROUP_SIZE),
+            'instance': (self.encoder_config.INSTANCE_NUM_GROUP, self.encoder_config.INSTANCE_GROUP_SIZE),
+            'region': (self.encoder_config.REGION_NUM_GROUP, self.encoder_config.REGION_GROUP_SIZE),
+        }
+        
+    def forward(self, xyz, pointcloud_features, level):
+        pass
+
 
 class AdaptiveLLM(nn.Module):
     def __init__(self, llm_config, encoder_config, finetune=False):

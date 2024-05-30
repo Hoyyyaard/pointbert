@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+models/openscene/ckpts
+models/openscene/data
+models/openscene/tmp
+
 # C extensions
 *.so
 

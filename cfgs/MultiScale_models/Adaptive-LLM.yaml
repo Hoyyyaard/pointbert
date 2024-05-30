@@ -32,6 +32,20 @@ model : {
   group_size: 16, 
   num_group: 128, 
   encoder_dims: 256,
+
+  use_openscene: True,
+  N_POINTS: 40000,
+  NUM_GROUP: 128,
+  GROUP_SIZE: 384, 
+
+  REGION_N_POINTS: 8192,
+  REGION_NUM_GROUP : 128,
+  REGION_GROUP_SIZE: 96,
+
+  INSTANCE_N_POINTS: 1024,
+  INSTANCE_NUM_GROUP: 128,
+  INSTANCE_GROUP_SIZE: 16,
+
 }
 
 
