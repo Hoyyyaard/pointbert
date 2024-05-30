@@ -58,7 +58,7 @@ def evaluate_svm(train_features, train_labels, test_features, test_labels):
     return np.sum(test_labels == pred) * 1. / pred.shape[0]
 
 
-def run_net(args, config, train_writer=None, val_writer=None):
+def run_net(args, config, train_writer=None, val_writer=None, test=False):
     logger = get_logger(args.log_name)
     
     finetune = config.get('finetune', False)
@@ -69,7 +69,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
 
     # build model
     llm_config  = AutoConfig.from_pretrained('ckpts/Llama-2-7b-hf/config.json')
-    base_model = AdaptiveLLM(llm_config, config.model)
+    base_model = AdaptiveLLM(llm_config, config.model, finetune=finetune)
 
     # from IPython import embed; embed()
     
@@ -104,7 +104,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         best_metrics = Acc_Metric(best_metric)
     else:
         if args.ckpts is not None:
-            base_model.load_model_from_ckpt(args.ckpts, args, finetune=finetune)
+            base_model.load_model_from_ckpt(args.ckpts, args, finetune=(finetune | test))
         else:
             print_log('Training from scratch', logger = logger)
     # print(torch.cuda.memory_summary())
@@ -124,178 +124,184 @@ def run_net(args, config, train_writer=None, val_writer=None):
     else:
         print_log('Using Data parallel ...' , logger = logger)
         base_model = nn.DataParallel(base_model).cuda()
+
+    # Train
+    if not test :
+        print_log("Trainable parameters")
+        if not finetune:
+            if torch.cuda.current_device() == 0:
+                for n, p in base_model.module.named_parameters():
+                    if p.requires_grad:
+                        print_log(n)
+        else:
+            if torch.cuda.current_device() == 0:
+                for n, p in base_model.named_parameters():
+                    if p.requires_grad:
+                        print_log(n)
         
-    print_log("Trainable parameters")
-    if not finetune:
-        if torch.cuda.current_device() == 0:
-            for n, p in base_model.module.named_parameters():
-                if p.requires_grad:
-                    print_log(n)
-    else:
-        if torch.cuda.current_device() == 0:
-            for n, p in base_model.named_parameters():
-                if p.requires_grad:
-                    print_log(n)
-    
-    # print(torch.cuda.memory_summary())
-    
-    # optimizer & scheduler
-    
-    optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
-    
-    if args.resume:
-        builder.resume_optimizer(optimizer, args, logger = logger)
-    
-    # 启用自动微分异常检测
-    # torch.autograd.set_detect_anomaly(True)
-    
-    # training
-    max_tolerant_nan = 5
-    curr_nan_times = 0
-    epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
-    base_model.zero_grad()
-    
-    for epoch in range(start_epoch, config.max_epoch + 1):
-        epoch_tqdm.update(1)
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-        base_model.train()
-
-        epoch_start_time = time.time()
-        batch_start_time = time.time()
-        batch_time = AverageMeter()
-        data_time = AverageMeter()
-        losses = AverageMeter(['Loss'])
-        from utils.misc import SmoothedValue
-        time_delta = SmoothedValue(window_size=10)
-
-        num_iter = 0
-
-        base_model.train()  # set model to training mode
-        n_batches = len(train_dataloader)
-        pbar = tqdm(total = n_batches)
-        for idx, data_dict in enumerate(train_dataloader):
-            
-            pbar.update(1)
+        # print(torch.cuda.memory_summary())
         
-            curr_time = time.time()
-            num_iter += 1
-            n_itr = epoch * n_batches + idx
-            
-            for k,v in data_dict.items():
-                if isinstance(v, torch.Tensor):
-                    data_dict[k] = v.cuda()
-                    if torch.isnan(data_dict[k]).any():
-                        assert False
-            
-            
-            # Debug
+        # optimizer & scheduler
+        
+        optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
+        
+        if args.resume:
+            builder.resume_optimizer(optimizer, args, logger = logger)
+        
+        # 启用自动微分异常检测
+        # torch.autograd.set_detect_anomaly(True)
+        
+        # training
+        max_tolerant_nan = 5
+        curr_nan_times = 0
+        epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
+        base_model.zero_grad()
+        
+        for epoch in range(start_epoch, config.max_epoch + 1):
+            epoch_tqdm.update(1)
+            if args.distributed:
+                train_sampler.set_epoch(epoch)
+            base_model.train()
 
-            data_time.update(time.time() - batch_start_time)
+            epoch_start_time = time.time()
+            batch_start_time = time.time()
+            batch_time = AverageMeter()
+            data_time = AverageMeter()
+            losses = AverageMeter(['Loss'])
+            from utils.misc import SmoothedValue
+            time_delta = SmoothedValue(window_size=10)
 
-            # assert points.size(1) == npoints
-            # As we have some grouding episode which do not suitable for pointcloud aug
-            # points = train_transforms(points)
-            loss = base_model(data_dict)
-            dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-            loss = loss / dist.get_world_size() 
-            
-            if not math.isfinite(loss.item()):
-                if curr_nan_times < max_tolerant_nan:
-                    print_log("Loss in not finite. Skip this training step.")
-                    curr_nan_times += 1
-                    continue
-                else:
-                    print_log("Loss in not finite. Terminate training.")
-                    exit(-1)
-            loss.backward()
-            curr_nan_times = 0
-            
-            if not finetune:
-                torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=10)
-            else:
-                torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=10)
+            num_iter = 0
+
+            base_model.train()  # set model to training mode
+            n_batches = len(train_dataloader)
+            pbar = tqdm(total = n_batches)
+            for idx, data_dict in enumerate(train_dataloader):
                 
+                pbar.update(1)
+            
+                curr_time = time.time()
+                num_iter += 1
+                n_itr = epoch * n_batches + idx
+                
+                for k,v in data_dict.items():
+                    if isinstance(v, torch.Tensor):
+                        data_dict[k] = v.cuda()
+                        if torch.isnan(data_dict[k]).any():
+                            assert False
+                
+                
+                # Debug
+
+                data_time.update(time.time() - batch_start_time)
+
+                # assert points.size(1) == npoints
+                # As we have some grouding episode which do not suitable for pointcloud aug
+                # points = train_transforms(points)
+                loss = base_model(data_dict)
+                dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                loss = loss / dist.get_world_size() 
+                
+                if not math.isfinite(loss.item()):
+                    if curr_nan_times < max_tolerant_nan:
+                        print_log("Loss in not finite. Skip this training step.")
+                        curr_nan_times += 1
+                        continue
+                    else:
+                        print_log("Loss in not finite. Terminate training.")
+                        exit(-1)
+                loss.backward()
+                curr_nan_times = 0
+                
+                if not finetune:
+                    torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=10)
+                else:
+                    torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=10)
+                    
+                    # for name, param in base_model.module.named_parameters():
+                    #     if torch.isnan(param).any():
+                    #         pass
+                    
+                # forward
+                if num_iter == config.step_per_update:
+                    num_iter = 0
+                    optimizer.step()
+                    base_model.zero_grad()
+                    
+                for n,p in base_model.module.named_parameters():
+                    if torch.isnan(p).any():
+                        print(n)
+                        
+                acc_step = int(len(train_dataloader) * epoch + idx)
+                if isinstance(scheduler, list):
+                    for item in scheduler:
+                        item.step(acc_step)
+                else:
+                    scheduler.step(acc_step)
+                    
                 # for name, param in base_model.module.named_parameters():
                 #     if torch.isnan(param).any():
                 #         pass
-                
-            # forward
-            if num_iter == config.step_per_update:
-                num_iter = 0
-                optimizer.step()
-                base_model.zero_grad()
-                
-            for n,p in base_model.module.named_parameters():
-                if torch.isnan(p).any():
-                    print(n)
-                    
-            acc_step = int(len(train_dataloader) * epoch + idx)
-            if isinstance(scheduler, list):
-                for item in scheduler:
-                    item.step(acc_step)
-            else:
-                scheduler.step(acc_step)
-                
-            # for name, param in base_model.module.named_parameters():
-            #     if torch.isnan(param).any():
-            #         pass
 
-            if args.distributed:
-                loss = dist_utils.reduce_tensor(loss, args)
-                losses.update([loss.item()])
-            else:
-                losses.update([loss.item()])
+                if args.distributed:
+                    loss = dist_utils.reduce_tensor(loss, args)
+                    losses.update([loss.item()])
+                else:
+                    losses.update([loss.item()])
 
 
-            if args.distributed:
-                torch.cuda.synchronize()
+                if args.distributed:
+                    torch.cuda.synchronize()
+
+                if train_writer is not None:
+                    train_writer.add_scalar('Loss/Batch/Loss', loss.item(), n_itr)
+                    train_writer.add_scalar('Loss/Batch/LR', optimizer.param_groups[0]['lr'], n_itr)
+
+
+                batch_time.update(time.time() - batch_start_time)
+                batch_start_time = time.time()
+                
+                time_delta.update(time.time() - curr_time)
+
+                if idx % 20 == 0:
+                    print_log('[Epoch %d/%d][Batch %d/%d] BatchTime = %.3f (s) DataTime = %.3f (s) Losses = %s lr = %.6f' %
+                                (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
+                                ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
+                    eta_seconds = (n_batches - idx) * time_delta.avg
+                    eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+                    print_log(f'ETA: {eta_str}', logger = logger)
+                
+                
+            epoch_end_time = time.time()
 
             if train_writer is not None:
-                train_writer.add_scalar('Loss/Batch/Loss', loss.item(), n_itr)
-                train_writer.add_scalar('Loss/Batch/LR', optimizer.param_groups[0]['lr'], n_itr)
+                train_writer.add_scalar('Loss/Epoch/Loss', losses.avg(0), epoch)
 
+            print_log('[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s' %
+                (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)
 
-            batch_time.update(time.time() - batch_start_time)
-            batch_start_time = time.time()
-            
-            time_delta.update(time.time() - curr_time)
+            # Debug
+            barrier()
+            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
+            if epoch % args.val_freq == 0 :
+                # Validate the current model
+                metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
 
-            if idx % 20 == 0:
-                print_log('[Epoch %d/%d][Batch %d/%d] BatchTime = %.3f (s) DataTime = %.3f (s) Losses = %s lr = %.6f' %
-                            (epoch, config.max_epoch, idx + 1, n_batches, batch_time.val(), data_time.val(),
-                            ['%.4f' % l for l in losses.val()], optimizer.param_groups[0]['lr']), logger = logger)
-                eta_seconds = (n_batches - idx) * time_delta.avg
-                eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
-                print_log(f'ETA: {eta_str}', logger = logger)
-            
-              
-        epoch_end_time = time.time()
-
+                # Save ckeckpoints
+                if metrics.better_than(best_metrics):
+                    best_metrics = metrics
+                    builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger, finetune=finetune) 
+            if (config.max_epoch - epoch) < 10:
+                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
         if train_writer is not None:
-            train_writer.add_scalar('Loss/Epoch/Loss', losses.avg(0), epoch)
-
-        print_log('[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s' %
-            (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)
-
-        # Debug
-        barrier()
-        # metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
-        builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
-        if epoch % args.val_freq == 0 :
-            # Validate the current model
-            metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
-
-            # Save ckeckpoints
-            if metrics.better_than(best_metrics):
-                best_metrics = metrics
-                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger, finetune=finetune) 
-        if (config.max_epoch - epoch) < 10:
-            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
-    if train_writer is not None:
-        train_writer.close()
-    if val_writer is not None:
-        val_writer.close()
+            train_writer.close()
+        if val_writer is not None:
+            val_writer.close()
+            
+    # Validate the model
+    else:
+        print('Only validating ...')
+        validate(base_model, test_dataloader, -1, val_writer, args, config, logger = logger, finetune=finetune)
 
 
 def score_captions(corpus: dict, candidates: dict):
@@ -358,8 +364,6 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
     with torch.no_grad():
         for idx, data_dict in enumerate(test_dataloader):
             
-            print(f"Rank {args.local_rank} evaling")
-            
             test_pbar.update(1)
             
             for k,v in data_dict.items():
@@ -367,7 +371,6 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                     data_dict[k] = v.cuda()
                     
             output_ids = base_model(data_dict, eval=True)
-            print(f"Rank {args.local_rank} finish evaling")
             outputs = dict(
                 output_ids=output_ids,
             )
@@ -381,7 +384,7 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                     gather_data_dict[k] = [item for sublist in zip(*v) for item in sublist]
             
             output_ids = outputs["output_ids"]  # batch x max_length
-            if finetune:
+            if not finetune:
                 answers = base_model.module.tokenizer.batch_decode(
                     output_ids,
                     skip_special_tokens=True,
@@ -423,108 +426,6 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
         if args.distributed:
             torch.cuda.synchronize()
     
-    '''            
-    else:
-        # Prepare ground truth for eval
-        scanqa_anno = test_dataloader.dataset.scanqa_anno
-        scanqa_corpus = {
-            '-'.join((anno['question_id'], anno['question'])): anno['answers'] \
-                for anno in scanqa_anno
-        }
-        object_caption_anno = test_dataloader.dataset.object_caption_anno
-        object_caption_corpus = {
-            '-'.join((anno['scene_id'], anno['object_id'])): anno['answers'] \
-                for anno in object_caption_anno
-        }
-        scene_caption_anno = test_dataloader.dataset.scene_caption_anno
-        scene_caption_corpus = {
-            anno['scene_id']: anno['answers'] \
-                for anno in scene_caption_anno
-        }
-        
-        candidates = {
-            'scanqa': {},
-            'object_caption': {},
-            'scene_caption': {}
-        }
-        
-        test_pbar = tqdm(total = len(test_dataloader))
-        with torch.no_grad():
-            for idx, data_dict in enumerate(test_dataloader):
-                test_pbar.update(1)
-                
-                for k,v in data_dict.items():
-                    if isinstance(v, torch.Tensor):
-                        data_dict[k] = v.cuda()
-                
-                output_ids = base_model(data_dict, eval=True)
-                
-                outputs = dict(
-                    output_ids=output_ids,
-                )
-                
-                outputs = all_gather_dict(outputs)
-                data_dict = all_gather_dict(data_dict)
-                # Flatten 2d list to 1d
-                for k,v in data_dict.items():
-                    if isinstance(v, list):
-                        data_dict[k] = [item for sublist in zip(*v) for item in sublist]
-                
-                output_ids = outputs["output_ids"]  # batch x max_length
-                answers = base_model.module.tokenizer.batch_decode(
-                    output_ids,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False
-                )
-                
-                
-                for idx in range(output_ids.shape[0]):
-                    key = data_dict['unique_key'][idx]
-                    task_name = data_dict['task_name'][idx]
-                    answer = answers[idx]
-                    answer = ' '.join(filter(lambda w: w, answer.split(' ')))
-                    candidates[task_name][key] = [answer]
-                
-                barrier()
-
-            torch.save({'candidates':candidates,
-                        'scanqa_corpus':scanqa_corpus,
-                        'object_caption_corpus':object_caption_corpus,
-                        'scene_caption_corpus':scene_caption_corpus}, f'{args.experiment_path}_{args.exp_name}_validation_{epoch}.pth')
-            print_log("Save all validation datas")
-
-            # end of forward pass traversion
-            qa_score_per_caption, qa_message, qa_eval_metric = score_captions(
-                OrderedDict([(key, scanqa_corpus[key]) for key in candidates['scanqa']]), candidates['scanqa']
-            )
-            oc_score_per_caption, oc_message, oc_eval_metric = score_captions(
-                OrderedDict([(key, object_caption_corpus[key]) for key in candidates['object_caption']]), candidates['object_caption']
-            )
-            sc_score_per_caption, sc_message, sc_eval_metric = score_captions(
-                OrderedDict([(key, scene_caption_corpus[key]) for key in candidates['scene_caption']]), candidates['scene_caption']
-            )
-            
-            if is_primary():
-                print_log("\n----------------------Evaluation QA-----------------------\n")
-                print_log(qa_message)
-                # print_log("\n----------------------Evaluation OC-----------------------\n")
-                # print_log(oc_message)
-                print_log("\n----------------------Evaluation SC-----------------------\n")
-                print_log(sc_message)
-
-                _log_to_disk(args, qa_message, scanqa_corpus, candidates['scanqa'], qa_score_per_caption, 'scanqa')
-                _log_to_disk(args, oc_message, object_caption_corpus, candidates['object_caption'], oc_score_per_caption, 'object_caption')
-                _log_to_disk(args, sc_message, scene_caption_corpus, candidates['scene_caption'], sc_score_per_caption, 'scene_caption')
-                
-            if args.distributed:
-                torch.cuda.synchronize()
-
-        # Add testing results to TensorBoard
-        if val_writer is not None:
-            val_writer.add_scalar('Metric/QA', qa_score_per_caption['cider'], epoch)
-            val_writer.add_scalar('Metric/OC', oc_score_per_caption['cider'], epoch)
-            val_writer.add_scalar('Metric/SC', sc_score_per_caption['cider'], epoch)
-        '''
         
     return Acc_Metric(0.)
 

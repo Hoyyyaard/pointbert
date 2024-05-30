@@ -689,6 +689,9 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             attention_mask = torch.cat((vision_mask, input_mask), dim=1)
             input_ids = None
 
+        # if torch.isnan(inputs_embeds).any():
+        #     a = 1
+        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states

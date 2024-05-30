@@ -741,7 +741,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
         objaverse_objs = list(self.objaverse_data.obj_cap_dict.keys())
         random.shuffle(objaverse_objs)
         # dist.broadcast_object_list(objaverse_objs, src=0)
-        for obj_dict in objaverse_objs[:100000]:
+        for obj_dict in objaverse_objs:
             self.all_object_caption.append({'dataset_name':'Objaverse', 
                                             "scan_name":obj_dict, 
                                             "task_name": "object_caption",
@@ -1156,7 +1156,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 points = self.pc_norm(points)
                 
                 # Concat xyz with rgb
-                points = np.concatenate([points, colors/255], 1)
+                # points = np.concatenate([points, colors/255], 1)
                 
                 points = _padding_pointcloud(points)
                 
@@ -1211,7 +1211,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 points = self.pc_norm(points)
                 
                 # Concat xyz with rgb
-                points = np.concatenate([points, colors/255], 1)
+                # points = np.concatenate([points, colors/255], 1)
                 points = _padding_pointcloud(points)
                 
                 ret_dict = {
@@ -1259,7 +1259,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             points = self.pc_norm(points)
             
             # Concat xyz with rgb
-            points = np.concatenate([points, colors/255], 1)
+            # points = np.concatenate([points, colors/255], 1)
             answers = anno['utterance']
             
             # Add bbox after the instance
@@ -1330,7 +1330,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             
             # Concat xyz with rgb
-            points = np.concatenate([points, colors/255], 1)
+            # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
             
             ret_dict = {
@@ -1385,6 +1385,15 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = 'right'
+        
+        special_tokens = ['<obj>', '</obj>']
+        xyz_prompt = 'loc{}'
+        for i in range(255):
+            special_tokens.append(xyz_prompt.format(i))
+        whl_prompt = 'whl{}'
+        for i in range(255):
+            special_tokens.append(whl_prompt.format(i))
+        self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
         
         # Load scene level data
         self._npoint = config.N_POINTS
@@ -1739,7 +1748,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             points = self.pc_norm(points)
             
-            points = np.concatenate([points, colors/255], 1)
+            # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
             
             ret_dict = {
@@ -1783,7 +1792,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             points = _augment_pointcloud(points)
             points = self.pc_norm(points)
             
-            points = np.concatenate([points, colors/255], 1)
+            # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
             
             ret_dict = {
@@ -1830,7 +1839,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             points = _augment_pointcloud(points)
             points = self.pc_norm(points)
             
-            points = np.concatenate([points, colors/255], 1)
+            # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
             
             ret_dict = {
@@ -1912,7 +1921,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             )
             bbox_str = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
             
-            points = np.concatenate([points, colors/255], 1)
+            # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
             
             ret_dict = {

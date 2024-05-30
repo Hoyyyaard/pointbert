@@ -102,7 +102,7 @@ def build_llm_opti_sche(base_model, config, train_loader, finetune=False):
     opti_params = filter(lambda p: p.requires_grad, base_model.parameters())
     
     opti_config = config.optimizer
-    eps = 1e-4 if finetune else 1e-8
+    eps = 1e-4 
     if opti_config.type == 'AdamW':
         optimizer = optim.AdamW(opti_params, eps=eps, **opti_config.kwargs)
     elif opti_config.type == 'Adam':
@@ -136,29 +136,7 @@ def build_llm_opti_sche(base_model, config, train_loader, finetune=False):
         if bnsche_config.type == 'Lambda':
             bnscheduler = build_lambda_bnsche(base_model, bnsche_config.kwargs)  # misc.py
         scheduler = [scheduler, bnscheduler]
-    
-    # total_epochs = sche_config.kwargs.epochs
-    # warmup_ratio = opti_config.kwargs.warmup_ratio  # Warmup ratio of 3%
-    # initial_lr = opti_config.kwargs.lr  # Initial learning rate
-    # warmup_lr = 1e-6
 
-    # Define optimizer
-    # eps = 1e-4 if finetune else 1e-8
-    # optimizer = optim.Adam(opti_params, lr=initial_lr, weight_decay=opti_config.kwargs.weight_decay, eps=eps)  # No weight decay
-
-    # # Define scheduler with warmup
-    # total_steps = len(train_loader) * total_epochs
-    # warmup_steps = int(total_steps * warmup_ratio)
-    # print("warmup_steps", warmup_steps)
-    
-    # # Define lambda function for warmup scheduler
-    # def lr_lambda(step):
-    #     if step < warmup_steps:
-    #         return warmup_lr + step * (initial_lr - warmup_lr) / warmup_steps
-    #     else:
-    #         return 0.5 * (math.cos((step - warmup_steps) / (total_steps - warmup_steps) * math.pi) + 1) * initial_lr
-
-    # scheduler = LambdaLR(optimizer, lr_lambda)
     
     return optimizer, scheduler
 

@@ -86,7 +86,7 @@ def main():
         
     # run
     if args.test:
-        test_net(args, config)
+        run_net(args, config, None, None, test=True)
     else:
         run_net(args, config, train_writer, val_writer)
 

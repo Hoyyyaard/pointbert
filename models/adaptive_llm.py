@@ -10,7 +10,7 @@ from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
 
 class AdaptiveLLM(nn.Module):
-    def __init__(self, llm_config, encoder_config):
+    def __init__(self, llm_config, encoder_config, finetune=False):
         super(AdaptiveLLM, self).__init__()
         self._llm_config = llm_config
         self._encoder_config = encoder_config
@@ -41,7 +41,20 @@ class AdaptiveLLM(nn.Module):
             self.llm.model.gradient_checkpointing_enable()
             self.llm.model.gradient_checkpointing = True
             print_log("Gradient checkpointing is enabled")
-            
+        
+        # FIXME
+        # Expand LLM vocalubary when finetune as there are grouding data
+        # if finetune:
+        #     special_tokens = ['<obj>', '</obj>']
+        #     xyz_prompt = 'loc{}'
+        #     for i in range(255):
+        #         special_tokens.append(xyz_prompt.format(i))
+        #     whl_prompt = 'whl{}'
+        #     for i in range(255):
+        #         special_tokens.append(whl_prompt.format(i))
+        #     self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
+        #     self.llm.resize_token_embeddings(len(self.tokenizer))
+        
         self.encoder = PointTransformer(self._encoder_config)
         
         self.encoder_to_llm_projection = nn.Sequential(
@@ -111,16 +124,19 @@ class AdaptiveLLM(nn.Module):
     def load_model_from_ckpt(self, bert_ckpt_path, args, finetune=False):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
         ckpt = torch.load(bert_ckpt_path, map_location=map_location)
-        if not finetune:
-            base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
-            for k in list(base_ckpt.keys()):
-                if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
-                    base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
-                elif k.startswith('base_model'):
-                    base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
-                del base_ckpt[k]
-        else:
-            base_ckpt = ckpt['base_model']
+        # if not finetune:
+        #     base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
+        #     for k in list(base_ckpt.keys()):
+        #         if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
+        #             base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
+        #         elif k.startswith('base_model'):
+        #             base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
+        #         del base_ckpt[k]
+        # else:
+        #     base_ckpt = ckpt['base_model']
+            
+        # uclip2
+        base_ckpt = {k.replace("module.point_encoder.", "encoder."): v for k, v in ckpt['state_dict'].items() if k.find('point_encoder') != -1}
             
         incompatible = self.load_state_dict(base_ckpt, strict=False)
 
@@ -167,10 +183,10 @@ class AdaptiveLLM(nn.Module):
             vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
             
             # Only use cls token
-            # vision_embed = torch.cat([], dim = -1).unsqueeze(1)
+            # vision_embed = torch.cat([cls_tokens, encoder_tokens.max(1)[0]], dim = -1).unsqueeze(1)
         
         # Find "instance" in level and use avg feature to represent instance
-        # instance_indices = [i for i, x in enumerate(level) if x == 'instance']
+        # instance_indices = [i for i, x in enumerate(level) if x == 'instance' or x == 'region']
         # if len(instance_indices) > 0:
         #     vision_embed.requires_grad_(False)
         #     instance_embed = vision_embed[instance_indices]
@@ -180,13 +196,17 @@ class AdaptiveLLM(nn.Module):
         #     vision_embed[instance_indices] = avg_instance_embed
             
         #     vision_mask = torch.ones_like(vision_embed[..., 0])
-        #     # vision_mask[instance_indices, 1:] = 0
+        #     vision_mask[instance_indices, 1:] = 0
         # else:
         vision_mask = torch.ones_like(vision_embed[..., 0])
         
         vision_embed.requires_grad_(True)
         vision_embed = vision_embed.to(self.dtype)
+        # if torch.isnan(vision_embed).any():
+        #     a = 1
         vision_embed = self.encoder_to_llm_projection(vision_embed)
+        # if torch.isnan(vision_embed).any():
+        #     a = 1
         # embedding_layer = self.llm.get_input_embeddings()
         
         if not eval:
@@ -209,7 +229,7 @@ class AdaptiveLLM(nn.Module):
                 vision_mask=vision_mask.to(self.dtype),
                 input_ids=input_ids,
                 attention_mask=input_mask.to(self.dtype),
-                output_attentions=False,
+                output_attentions=True,
             )
             
             gradient_mask = data_dict['gradient_mask']
@@ -218,6 +238,9 @@ class AdaptiveLLM(nn.Module):
                 target = input_ids,
                 mask = gradient_mask.to(self.dtype),
             )
+            
+            # if torch.isnan(outputs.logits).any():
+            #     a = 1
             
             return loss
         
