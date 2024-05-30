@@ -1,4 +1,4 @@
-'''Dataloader for fused point features.'''
+# '''Dataloader for fused point features.'''
 
 import copy
 from glob import glob
@@ -6,7 +6,6 @@ from os.path import join
 import torch
 import numpy as np
 import SharedArray as SA
-import open3d
 import os
 
 from dataset.point_loader import Point3DLoader
@@ -29,9 +28,10 @@ class FusedFeatureLoader(Point3DLoader):
         self.aug = False
         self.input_color = True # decide whether we use point color values as input
 
-        self.base_data_path = '/home/admin/Projects/LL3DA/tmp/SceneVerse'
-        # self._dataset_name = ['3RScan', 'ARKitScenes', 'HM3D', 'MultiScan', 'ScanNet']
-        self._dataset_name = [os.getenv('SCAN_NAME')]
+        # self.base_data_path = '/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/data/SceneVerse'
+        self.base_data_path = '/home/admin/Projects/Point-BERT/data/SceneVerse'
+        self._dataset_name = ['3RScan', 'ARKitScenes', 'HM3D', 'MultiScan', 'ScanNet']
+        # self._dataset_name = [os.getenv('SCAN_NAME')]
         self.data_paths = []
         for dataset_name in self._dataset_name:
             self.data_paths += glob(join(self.base_data_path, dataset_name, 'scan_data', 'pcd_with_global_alignment', '*.pth'))
@@ -71,7 +71,7 @@ class FusedFeatureLoader(Point3DLoader):
             feats = torch.ones(coords.shape[0], 3)
         labels = torch.from_numpy(labels).long()
         
-        return coords, feats, labels, None, mask, torch.from_numpy(inds_reconstruct).long(), torch.from_numpy(locs_in), torch.from_numpy(feats_in), self.data_paths[index]
+        return coords, feats, labels, None, mask, torch.from_numpy(inds_reconstruct).long(), torch.from_numpy(locs_in), torch.from_numpy(feats_in), torch.from_numpy(labels_in), self.data_paths[index]
 
 def collation_fn(batch):
     '''
@@ -105,8 +105,8 @@ def collation_fn_eval_all(batch):
                 inds_recons:ON
 
     '''
-    coords, feats, labels, feat_3d, mask, inds_reconstruct, locs_in, feat_in, scene_name = list(zip(*batch))
+    coords, feats, labels, feat_3d, mask, inds_reconstruct, locs_in, feat_in, labels_in, scene_name = list(zip(*batch))
 
 
     return torch.cat(coords), torch.cat(feats), torch.cat(labels), \
-        feat_3d, torch.cat(mask), torch.cat(inds_reconstruct), torch.cat(locs_in), torch.cat(feat_in), scene_name
+        feat_3d, torch.cat(mask), torch.cat(inds_reconstruct), torch.cat(locs_in), torch.cat(feat_in), torch.cat(labels_in), scene_name

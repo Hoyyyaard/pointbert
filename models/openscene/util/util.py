@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch import nn
 from PIL import Image
-import open3d as o3d
+# import open3d as o3d
 import clip
 
 import matplotlib.patches as mpatches

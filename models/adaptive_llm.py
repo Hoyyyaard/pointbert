@@ -9,6 +9,10 @@ from tools.generation_utils import generation
 from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
 from models.dvae import Group
+import numpy as np
+import os 
+from pointnet2_ops import pointnet2_utils
+
 
 class OpensceneEncoder(nn.Module):
     def __init__(self, encoder_config):
@@ -22,10 +26,67 @@ class OpensceneEncoder(nn.Module):
             'instance': (self.encoder_config.INSTANCE_NUM_GROUP, self.encoder_config.INSTANCE_GROUP_SIZE),
             'region': (self.encoder_config.REGION_NUM_GROUP, self.encoder_config.REGION_GROUP_SIZE),
         }
+        self.scene_npoints = self.encoder_config.N_POINTS
+        self.region_npoints = self.encoder_config.REGION_N_POINTS
+        self.instance_npoints = self.encoder_config.INSTANCE_N_POINTS
         
-    def forward(self, xyz, pointcloud_features, level):
-        pass
-
+    def forward(self, xyzs, pointcloud_features, level):
+        B, _, dim = pointcloud_features.shape
+        max_token_num = self.level_group_map['scene'][0]
+        region_token_num = self.level_group_map['region'][0]
+        instance_token_num = self.level_group_map['instance'][0]
+        all_fts = torch.zeros((B, max_token_num, dim), device=pointcloud_features.device, dtype=pointcloud_features.dtype)
+        all_fts_mask = torch.zeros((B, max_token_num), device=pointcloud_features.device, dtype=pointcloud_features.dtype)
+        
+        # Different level data has different number of groups
+        # We process them seperately
+        instance_idx = [li for li,l in enumerate(level) if l=='instance']
+        region_idx = [li for li,l in enumerate(level) if l=='region']
+        scene_idx = [li for li,l in enumerate(level) if l=='scene']
+        
+        if len(instance_idx) > 0:
+            # For instance level we only need to avg pooling the features
+            instance_fts = pointcloud_features[instance_idx][:, :self.instance_npoints, :]
+            instance_fts = instance_fts.mean(1).unsqueeze(1)
+            ## Padding
+            padding_instance_embed = torch.zeros((instance_fts.shape[0], max_token_num-instance_token_num, instance_fts.shape[-1]), device=instance_fts.device)
+            instance_fts = torch.cat([padding_instance_embed, instance_fts], dim=1)
+            all_fts[instance_idx] = instance_fts
+            for id in instance_idx:
+                all_fts_mask[id, -instance_token_num:] = 1
+        
+        # For region and scene level we need to group and gather the features
+        if len(scene_idx) > 0:
+            self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['scene']
+            scene_fts = pointcloud_features[scene_idx][:, :self.scene_npoints, :]
+            xyz = xyzs[scene_idx][:, :self.scene_npoints, :]
+            scene_pointclouds = torch.cat([xyz, scene_fts], dim=-1)
+            ## batch_size, num_group, group_size, 768
+            scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds)
+            ## Dop xyz
+            scene_fts = scene_neighborhood[... , 3:].mean(-2)
+            all_fts[scene_idx] = scene_fts
+            all_fts_mask[scene_idx] = 1
+        
+        if len(region_idx) > 0:
+            self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['region']
+            region_fts = pointcloud_features[region_idx][:, :self.region_npoints, :]
+            xyz = xyzs[region_idx][:, :self.region_npoints, :]
+            region_pointclouds = torch.cat([xyz, region_fts], dim=-1)
+            ## batch_size, num_group, group_size, 768
+            region_neighborhood, region_center = self.pointcloud_tokenizer(region_pointclouds)
+            ## Dop xyz
+            region_fts = region_neighborhood[... , 3:].mean(-2)
+            ## Padding
+            padding_region_embed = torch.zeros((region_fts.shape[0], max_token_num-region_token_num, region_fts.shape[-1]), device=region_fts.device)
+            region_fts = torch.cat([padding_region_embed, region_fts], dim=1)
+            all_fts[region_idx] = region_fts
+            for id in region_idx:
+                all_fts_mask[id, -region_token_num:] = 1
+        
+        return all_fts, all_fts_mask
+        
+        
 
 class AdaptiveLLM(nn.Module):
     def __init__(self, llm_config, encoder_config, finetune=False):
@@ -33,7 +94,7 @@ class AdaptiveLLM(nn.Module):
         self._llm_config = llm_config
         self._encoder_config = encoder_config
         self.dtype = torch.float16
-        
+        self.OPENSCENE = self._encoder_config.NAME == 'Openscene'
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf')
         
         # For debug in 3090
@@ -73,7 +134,10 @@ class AdaptiveLLM(nn.Module):
         #     self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
         #     self.llm.resize_token_embeddings(len(self.tokenizer))
         
-        self.encoder = PointTransformer(self._encoder_config)
+        if not self.OPENSCENE:
+            self.encoder = PointTransformer(self._encoder_config)
+        else:
+            self.encoder = OpensceneEncoder(self._encoder_config)
         
         self.encoder_to_llm_projection = nn.Sequential(
             nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
@@ -195,28 +259,31 @@ class AdaptiveLLM(nn.Module):
             group_size = data_dict['group_size']
             level = data_dict['level']
             
-            cls_tokens, encoder_tokens, center = self.encoder(points, num_group=num_group, group_size=group_size, level=level, forward_llm=True)
-            # Concat cls_tokens and encoder_tokens
-            cls_tokens = cls_tokens.unsqueeze(1)
-            vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
+            if not self.OPENSCENE:
+                cls_tokens, encoder_tokens, center = self.encoder(points, num_group=num_group, group_size=group_size, level=level, forward_llm=True)
+                # Concat cls_tokens and encoder_tokens
+                cls_tokens = cls_tokens.unsqueeze(1)
+                vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
             
-            # Only use cls token
-            # vision_embed = torch.cat([cls_tokens, encoder_tokens.max(1)[0]], dim = -1).unsqueeze(1)
-        
-        # Find "instance" in level and use avg feature to represent instance
-        # instance_indices = [i for i, x in enumerate(level) if x == 'instance' or x == 'region']
-        # if len(instance_indices) > 0:
-        #     vision_embed.requires_grad_(False)
-        #     instance_embed = vision_embed[instance_indices]
-        #     avg_instance_embed = (instance_embed[:, 0, :] + instance_embed[:, 1:, :].max(1)[0]).unsqueeze(1).repeat(1, vision_embed.shape[1], 1)
-        #     # padding_instance_embed = torch.zeros((avg_instance_embed.shape[0], vision_embed.shape[1]-1, vision_embed.shape[-1]), device=vision_embed.device)
-        #     # avg_instance_embed = torch.cat([avg_instance_embed, padding_instance_embed], dim=1)
-        #     vision_embed[instance_indices] = avg_instance_embed
-            
-        #     vision_mask = torch.ones_like(vision_embed[..., 0])
-        #     vision_mask[instance_indices, 1:] = 0
-        # else:
-        vision_mask = torch.ones_like(vision_embed[..., 0])
+                # Only use cls token
+                # vision_embed = torch.cat([cls_tokens, encoder_tokens.max(1)[0]], dim = -1).unsqueeze(1)
+                
+                # Find "instance" in level and use avg feature to represent instance
+                # instance_indices = [i for i, x in enumerate(level) if x == 'instance' or x == 'region']
+                # if len(instance_indices) > 0:
+                #     vision_embed.requires_grad_(False)
+                #     instance_embed = vision_embed[instance_indices]
+                #     avg_instance_embed = (instance_embed[:, 0, :] + instance_embed[:, 1:, :].max(1)[0]).unsqueeze(1).repeat(1, vision_embed.shape[1], 1)
+                #     # padding_instance_embed = torch.zeros((avg_instance_embed.shape[0], vision_embed.shape[1]-1, vision_embed.shape[-1]), device=vision_embed.device)
+                #     # avg_instance_embed = torch.cat([avg_instance_embed, padding_instance_embed], dim=1)
+                #     vision_embed[instance_indices] = avg_instance_embed
+                    
+                #     vision_mask = torch.ones_like(vision_embed[..., 0])
+                #     vision_mask[instance_indices, 1:] = 0
+                # else:
+                vision_mask = torch.ones_like(vision_embed[..., 0])
+            else:
+                vision_embed, vision_mask = self.encoder(points, data_dict['features'], level)
         
         vision_embed.requires_grad_(True)
         vision_embed = vision_embed.to(self.dtype)

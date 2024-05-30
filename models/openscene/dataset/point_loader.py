@@ -78,8 +78,8 @@ class Point3DLoader(torch.utils.data.Dataset):
             split = ''
         self.identifier = identifier
         self.data_paths = sorted(glob(join(datapath_prefix, split, '*.pth')))
-        if len(self.data_paths) == 0:
-            raise Exception('0 file is loaded in the point loader.')
+        # if len(self.data_paths) == 0:
+        #     raise Exception('0 file is loaded in the point loader.')
 
         self.input_color = input_color
         self.voxel_size = voxel_size

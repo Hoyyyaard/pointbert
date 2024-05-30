@@ -589,7 +589,7 @@ def _padding_pointcloud(points):
     PAD_DATA_NUM = 40000
     pad_num = PAD_DATA_NUM - points.shape[0]
     if pad_num > 0:
-        pad_points = np.zeros((pad_num, points.shape[-1]))
+        pad_points = np.zeros((pad_num, points.shape[-1])).astype(points.dtype)
         points = np.concatenate([points, pad_points], axis=0)
     return points
     
@@ -616,6 +616,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = 'right'
         
+        # If use openscene as encoder
+        self.OPENSCENE = config.OPENSCENE
+        
         # Load scene level data
         self._npoint = config.N_POINTS
         self._group_size = config.GROUP_SIZE
@@ -623,6 +626,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
         _all_dataset_name = ['3RScan', 'HM3D', 'MultiScan', 'ARKitScenes', 'ScanNet']
     
         self._all_dataset_root = 'data/SceneVerse'
+        self._openscene_root = 'data/SceneVerse/OpenScene_Scan_Features'
         self._all_scans = []
         self.dataset_names = []
         
@@ -664,6 +668,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
         region_aug_pcd = {p:[] for p in region_aug_pcd}
         # valid_region_relation_path = []
         for dataset_name, annotations in all_dataset_dict.items():
+            
+            # FIXME:debug
+            # if not dataset_name == '3RScan':
+            #     continue
+            
             # Process scene caption: {scan_name: [captions]}
             # ~41k
             scene_annos = annotations.get('scene_caption')
@@ -705,16 +714,20 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             # Process object caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]
             # ~136k
+            
             ## As HM3D only contains annotations from template like 'the pointcloud of xxx'
             # if dataset_name == 'HM3D':
             #     continue
-            # object_annos = annotations.get('object_caption')
-            # for oa in object_annos:
-            #     scan_name = oa['scan_id']
-            #     # As some object instance pointcloud will miss after downsample, we only keep the object caption with pcd data large than threshold
-            #     if f'{dataset_name}_{scan_name}.pth_{oa["target_id"]}.npz' not in region_aug_pcd.keys():
-            #         continue
-            #     self.all_object_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":oa, "task_name": "object_caption"})
+            
+            ## Openscene as encoder only can use scene object caption data
+            if self.OPENSCENE:
+                object_annos = annotations.get('object_caption')
+                for oa in object_annos:
+                    scan_name = oa['scan_id']
+                    # As some object instance pointcloud will miss after downsample, we only keep the object caption with pcd data large than threshold
+                    if f'{dataset_name}_{scan_name}.pth_{oa["target_id"]}.npz' not in region_aug_pcd.keys():
+                        continue
+                    self.all_object_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":oa, "task_name": "object_caption"})
 
         # with open('data/SceneVerse/valid_region_relation_path.json', 'w') as f:
         #     json.dump(valid_region_relation_path, f)
@@ -736,20 +749,22 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self._instance_npoint = config.INSTANCE_N_POINTS
         self._instance_group_size = config.INSTANCE_GROUP_SIZE
         self._instance_num_groups = config.INSTANCE_NUM_GROUP
-        self._load_objaverse_data()
         
-        objaverse_objs = list(self.objaverse_data.obj_cap_dict.keys())
-        random.shuffle(objaverse_objs)
-        # dist.broadcast_object_list(objaverse_objs, src=0)
-        for obj_dict in objaverse_objs:
-            self.all_object_caption.append({'dataset_name':'Objaverse', 
-                                            "scan_name":obj_dict, 
-                                            "task_name": "object_caption",
-                                            "anno":{
-                                                    'item_id': obj_dict,
-                                                    'scan_id': obj_dict,
-                                                    'utterance': self.objaverse_data.obj_cap_dict[obj_dict]
-                                                    }})
+        # Openscene cannet deal with only object input 
+        if not self.OPENSCENE:
+            self._load_objaverse_data()
+            objaverse_objs = list(self.objaverse_data.obj_cap_dict.keys())
+            random.shuffle(objaverse_objs)
+            # dist.broadcast_object_list(objaverse_objs, src=0)
+            for obj_dict in objaverse_objs:
+                self.all_object_caption.append({'dataset_name':'Objaverse', 
+                                                "scan_name":obj_dict, 
+                                                "task_name": "object_caption",
+                                                "anno":{
+                                                        'item_id': obj_dict,
+                                                        'scan_id': obj_dict,
+                                                        'utterance': self.objaverse_data.obj_cap_dict[obj_dict]
+                                                        }})
         
         # Load some LEO scene caption data 
         leo_scene_train_caption = json.load(open('data/LEO_DATA/annotations/alignment/scene_caption/3rscan_scenecap_train.json', 'r'))
@@ -776,8 +791,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
                                                 }
                                             })
         self.all_scene_caption.extend(extend_leo_scene_caption)
-        if config.subset == 'train':
-            self.all_scene_caption = self.all_scene_caption * 2
+        # if config.subset == 'train':
+        #     self.all_scene_caption = self.all_scene_caption * 2
         
         # Load some grouding scene caption data ~107k from GroundLLM https://arxiv.org/pdf/2405.10370
         # grounding_scene_caption_anno = json.load(open('data/SceneVerse/ScanNet/annotations/scene_caption/groundedscenecaption_format.json', 'r'))
@@ -802,9 +817,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         # dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
-            # self.all_scene_caption = self.all_scene_caption[:-2000]
-            # self.all_relation_caption = self.all_relation_caption[:-2000]
-            # self.all_object_caption = self.all_object_caption[:-2000]
+            self.all_scene_caption = self.all_scene_caption[:-2000]
+            self.all_relation_caption = self.all_relation_caption[:-2000]
+            self.all_object_caption = self.all_object_caption[:-2000]
             self.all_scene_caption = self.all_scene_caption[:100000]
             self.all_relation_caption = self.all_relation_caption[:100000]
             self.all_object_caption = self.all_object_caption[:100000]
@@ -848,7 +863,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self.order_episodes = []
         self.order_levels = []
         
-        # TODO
+        # Shuffle code
         self.order_episodes.extend(self.all_scene_caption)
         self.order_levels.extend(['scene'] * len(self.all_scene_caption))
         self.order_episodes.extend(self.all_relation_caption)
@@ -856,7 +871,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self.order_episodes.extend(self.all_object_caption)
         self.order_levels.extend(['instance'] * len(self.all_object_caption))       
         
-        # TODO
+        # None shuffle code
         # As diffent dataset has different number of points, we need to specify the dataset squence order 
         # to make sure samples from on batch come from the same level dataset
         # batch_size_pre_rank = config.tbs
@@ -954,16 +969,28 @@ class SceneVerseLLMPretrainDataset(Dataset):
         return points, colors, pcds, instance_labels, inst_to_label
     
     def _load_scan_data(self, scan_name, dataset_name):
-        dataset_root = os.path.join(self._all_dataset_root, dataset_name)
-        annotation_root = os.path.join(dataset_root, 'annotations')
-        scan_data_root = os.path.join(dataset_root, 'scan_data')
-        
-        inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
-        pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
+        if not self.OPENSCENE:
+            dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+            annotation_root = os.path.join(dataset_root, 'annotations')
+            scan_data_root = os.path.join(dataset_root, 'scan_data')
+            
+            inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+            pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
 
-        points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
-        
-        return points, colors, pcds, instance_labels, inst_to_label
+            points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
+            features = None
+        else:
+            dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+            scan_data_root = os.path.join(dataset_root, 'scan_data')
+            inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}")) 
+            dataset_root = os.path.join(self._openscene_root, dataset_name)
+            dict = torch.load(os.path.join(dataset_root, scan_name), map_location='cpu')
+            points = dict['points'].numpy().astype(np.float32)
+            colors = dict['colors'].numpy()
+            features = dict['features'].numpy().astype(np.float32)
+            instance_labels = dict['instance_labels'].numpy()
+        return points, colors, features, instance_labels, inst_to_label
         
     def convert_pc_to_box(self, obj_pc):
         xmin = np.min(obj_pc[:,0])
@@ -976,12 +1003,13 @@ class SceneVerseLLMPretrainDataset(Dataset):
         box_size = np.array([xmax-xmin, ymax-ymin, zmax-zmin])
         return center, box_size
     
-    def down_sample(self, points, colors, instance_labels=None, npoint=None):
+    def down_sample(self, points, colors, instance_labels=None, features=None, npoint=None):
         pcd_idxs = np.random.choice(len(points), size=npoint, replace=len(points) < npoint)
         points = points[pcd_idxs]
         colors = colors[pcd_idxs]
         instance_labels = instance_labels[pcd_idxs] if not instance_labels is None else None
-        return points, colors, instance_labels
+        features = features[pcd_idxs] if not features is None else None
+        return points, colors, instance_labels, features
     
     def pc_norm(self, pc):
         """ pc: NxC, return NxC """
@@ -1083,180 +1111,80 @@ class SceneVerseLLMPretrainDataset(Dataset):
         )
         
         if level == 'scene':
-            points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
-            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
+            points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+            points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._npoint)
             
-            if task_name == 'object_grouding':
-                assert False
+            if not self.OPENSCENE:
+                points = _augment_pointcloud(points)
                 points = self.pc_norm(points)
-                tgt_id = int(anno['target_id'])
-                object_points = points[instance_labels == tgt_id]
-                center, whl = self.convert_pc_to_box(object_points)
-                
-                point_cloud_dims_min = points.min(axis=0)
-                point_cloud_dims_max = points.max(axis=0)
-
-                box_centers = center.astype(np.float32)
-                
-                center_normalizing_range = [
-                    np.zeros((1, 3), dtype=np.float32),
-                    np.ones((1, 3), dtype=np.float32),
-                ]
-                box_centers_normalized = self._shift_scale_points(
-                    box_centers[None, ...],
-                    src_range=[
-                        point_cloud_dims_min[None, ...],
-                        point_cloud_dims_max[None, ...],
-                    ],
-                    dst_range=center_normalizing_range,
-                )
-                mult_factor = point_cloud_dims_max - point_cloud_dims_min
-                box_sizes_normalized = self._scale_points(
-                    whl.astype(np.float32)[None, ...],
-                    mult_factor=1.0 / mult_factor[None, ...],
-                )
-                bbox_str = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
-                
-                ret_dict = {
-                    'points': points.astype(np.float32),
-                    # 'colors': colors.astype(np.float32),
-                    'num_groups': self._num_groups,
-                    'group_size': self._group_size,
-                    'dataset_name': dataset_name,
-                    'level': level,
-                    'scan_name': scan_name,
-                    'task_name': task_name
-                }
-                
-                caption = anno['utterance']
-                intruction = f'Locate the object in the scene according to the object caption: {caption}'
-                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-                
-                answers = bbox_str
-                llm_inputs = self.tokenizer.batch_encode_plus(
-                [' '.join((intruction, answers, self.tokenizer.eos_token))],
-                **self.tokenizer_config
-                )
-                
-                ret_dict['answers'] = answers
-                ret_dict['question'] = intruction
-                ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
-                ret_dict['gradient_mask'] = \
-                    (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
-                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-
-                return ret_dict
             
-            elif task_name == 'scene_caption_with_bbox':
-                
-                points = _augment_pointcloud(points)
-                
-                points = self.pc_norm(points)
-                
-                # Concat xyz with rgb
-                # points = np.concatenate([points, colors/255], 1)
-                
-                points = _padding_pointcloud(points)
-                
-                ret_dict = {
-                    'points': points.astype(np.float32),
-                    # 'colors': colors.astype(np.float32),
-                    'num_groups': self._num_groups,
-                    'group_size': self._group_size,
-                    'dataset_name': dataset_name,
-                    'level': level,
-                    'scan_name': scan_name,
-                    'task_name': task_name,
-                    'episode_id': data['episode_id']
-                }
-                
-                intruction = random.choice(TASK_PROMPT[task_name])
-                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-                
-                answers = anno['utterance']
-                # [[xxx,xxx],[xxx],...]
-                object_ids = anno['object_ids']
-                positions = anno['all_phrases_positions']
-                acc_len = 0
-                for oids, pos in zip(object_ids, positions):
-                    end_pos = pos[-1] + acc_len
-                    bbox = ' '
-                    for oid in oids:
-                        bbox += self.instance_id_to_bbox_str(int(oid), instance_labels, points[:, :3])
-                        bbox += ' '
-                    answers = answers[:end_pos] + bbox  + answers[end_pos:]
-                    acc_len += len(bbox)
-                
-                llm_inputs = self.tokenizer.batch_encode_plus(
-                [' '.join((intruction, answers, self.tokenizer.eos_token))],
-                **self.tokenizer_config
-                )
-                
-                ret_dict['answers'] = answers
-                ret_dict['question'] = intruction
-                ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
-                ret_dict['gradient_mask'] = \
-                    (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
-                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+            # Concat xyz with rgb
+            # points = np.concatenate([points, colors/255], 1)
+            points = _padding_pointcloud(points)
+            
+            ret_dict = {
+                'points': points.astype(np.float32),
+                # 'colors': colors.astype(np.float32),
+                'num_groups': self._num_groups,
+                'group_size': self._group_size,
+                'dataset_name': dataset_name,
+                'level': level,
+                'scan_name': scan_name,
+                'task_name': task_name,
+                'episode_id': data['episode_id']
+            }
+            
+            if self.OPENSCENE:
+                ret_dict['features'] = _padding_pointcloud(features)
+            
+            intruction = random.choice(TASK_PROMPT[task_name])
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            
+            answers = anno['utterance']
+            llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+            )
+            
+            ret_dict['answers'] = answers
+            ret_dict['question'] = intruction
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
-                return ret_dict
-            # Scene Caption
-            else:
-                points = _augment_pointcloud(points)
-                
-                points = self.pc_norm(points)
-                
-                # Concat xyz with rgb
-                # points = np.concatenate([points, colors/255], 1)
-                points = _padding_pointcloud(points)
-                
-                ret_dict = {
-                    'points': points.astype(np.float32),
-                    # 'colors': colors.astype(np.float32),
-                    'num_groups': self._num_groups,
-                    'group_size': self._group_size,
-                    'dataset_name': dataset_name,
-                    'level': level,
-                    'scan_name': scan_name,
-                    'task_name': task_name,
-                    'episode_id': data['episode_id']
-                }
-                
-                intruction = random.choice(TASK_PROMPT[task_name])
-                prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-                
-                answers = anno['utterance']
-                llm_inputs = self.tokenizer.batch_encode_plus(
-                [' '.join((intruction, answers, self.tokenizer.eos_token))],
-                **self.tokenizer_config
-                )
-                
-                ret_dict['answers'] = answers
-                ret_dict['question'] = intruction
-                ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
-                ret_dict['gradient_mask'] = \
-                    (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
-                ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-                ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-
-                return ret_dict
+            return ret_dict
             
         
         elif level == 'region':
             instance_id = int(anno['target_id'])
-            path = f'{dataset_name}_{scan_name}.pth_{instance_id}.npz'
-            region_data = np.load(os.path.join('data/SceneVerse/RegionAugData', path))
-            points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
-            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._region_npoint)
             
-            points = _augment_pointcloud(points)
-            
-            points = self.pc_norm(points)
+            if not self.OPENSCENE:
+                path = f'{dataset_name}_{scan_name}.pth_{instance_id}.npz'
+                region_data = np.load(os.path.join('data/SceneVerse/RegionAugData', path))
+                points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
+                points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, None, self._region_npoint)
+                points = _augment_pointcloud(points)
+                points = self.pc_norm(points)
+            else:
+                points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+                inst_pc = points[instance_labels == instance_id]
+                
+                fix_whl_size = 2
+                center, whl = self.convert_pc_to_box(inst_pc)
+                fixed_whl = np.array([fix_whl_size, fix_whl_size, fix_whl_size])  
+                min_bound = center - fixed_whl / 2.0
+                max_bound = center + fixed_whl / 2.0
+                indices_within_bbox = np.where(np.all((points >= min_bound) & (points <= max_bound), axis=1))[0]
+                
+                points = points[indices_within_bbox]
+                colors = colors[indices_within_bbox]
+                instance_labels = instance_labels[indices_within_bbox]
+                features = features[indices_within_bbox]
+                
+                points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._region_npoint)
             
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
@@ -1296,6 +1224,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'episode_id': data['episode_id']
             }
             
+            if self.OPENSCENE:
+                ret_dict['features'] = _padding_pointcloud(features)
+            
             ret_dict['answers'] = answers
             ret_dict['question'] = intruction
             ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
@@ -1311,22 +1242,31 @@ class SceneVerseLLMPretrainDataset(Dataset):
             return ret_dict
         
         elif level == 'instance':
-            if dataset_name == 'Objaverse':
-                obj_pcd = self.objaverse_data.load_obj_pcd(scan_name)
-                points = obj_pcd[:, :3]
-                colors = obj_pcd[:, 3:]
-                points, colors, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
-                points = _augment_pointcloud(points)
-                points = self.pc_norm(points)
+            if not self.OPENSCENE:
+                if dataset_name == 'Objaverse':
+                    obj_pcd = self.objaverse_data.load_obj_pcd(scan_name)
+                    points = obj_pcd[:, :3]
+                    colors = obj_pcd[:, 3:]
+                    points, colors, _, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
+                    points = _augment_pointcloud(points)
+                    points = self.pc_norm(points)
+                else:
+                    points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+                    instance_id = int(anno['target_id'])
+                    object_points = points[instance_labels == instance_id]
+                    object_colors = colors[instance_labels == instance_id]
+                    instance_labels = instance_labels[instance_labels == instance_id]
+                    points, colors, _, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
+                    points = _augment_pointcloud(points)
+                    points = self.pc_norm(points)
             else:
-                points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+                points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
                 instance_id = int(anno['target_id'])
                 object_points = points[instance_labels == instance_id]
                 object_colors = colors[instance_labels == instance_id]
+                features = features[instance_labels == instance_id]
                 instance_labels = instance_labels[instance_labels == instance_id]
-                points, colors, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
-                points = _augment_pointcloud(points)
-                points = self.pc_norm(points)
+                points, colors, instance_labels, features = self.down_sample(object_points, object_colors, instance_labels, features, npoint=self._instance_npoint)
             
             
             # Concat xyz with rgb
@@ -1345,7 +1285,14 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'episode_id': data['episode_id']
             }
             
-            intruction = random.choice(TASK_PROMPT[task_name])
+            if self.OPENSCENE:
+                ret_dict['features'] = _padding_pointcloud(features)
+            
+            # HM3D only has annotation:"the poinclouds of xxx"
+            if not scan_name == 'HM3D':
+                intruction = random.choice(TASK_PROMPT[task_name]) 
+            else:
+                intruction = '### human: what object is the poinclouds? ### assistant:'
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']

@@ -5,7 +5,8 @@ import logging
 import argparse
 import urllib
 import sys
-sys.path.append('models/openscene')
+sys.path.append('/home/admin/Projects/Point-BERT/models/openscene')
+# sys.path.append('/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/models/openscene')
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.parallel
@@ -282,12 +283,13 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
             if mark_no_feature_to_unknown:
                 masks = []
 
-            for i, (coords, feat, label, feat_3d, mask, inds_reverse, locs_in, feat_in, scan_name) in enumerate(tqdm(val_data_loader)):
+            for i, (coords, feat, label, feat_3d, mask, inds_reverse, locs_in, feat_in, instance_labels, scan_name) in enumerate(tqdm(val_data_loader)):
                 sinput = SparseTensor(feat.cuda(non_blocking=True), coords.cuda(non_blocking=True))
                 coords = coords[inds_reverse, :]
                 pcl = coords[:, 1:].cpu().numpy()
 
-                base_dir = f'data/SceneVerse/OpenScene_Scan_Features'
+                base_dir = '/home/admin/Projects/Point-BERT/data/SceneVerse/OpenScene_Scan_Features'
+                # base_dir = '/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/data/SceneVerse/OpenScene_Scan_Features'
                 dataset_name = scan_name[0].split('/')[-4]
                 scan_name = scan_name[0].split('/')[-1].split('.')[0]
                 op_dir = f'{base_dir}/{dataset_name}'
@@ -298,10 +300,19 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                     
                     predictions = predictions[inds_reverse, :]
                     
-                    np.save(f'{op_dir}/{scan_name}_distill_fts.npy', predictions.cpu().numpy())
-                    torch.save(locs_in, f'{op_dir}/{scan_name}_xyz.pt')
-                    torch.save(inds_reverse, f'{op_dir}/{scan_name}_inds_reverse.pt')
-                    torch.save(feat_in, f'{op_dir}/{scan_name}_color.pt')
+                    # save in torch dict format
+                    save_dict = {
+                        'features': predictions.half(),
+                        'points': locs_in,
+                        'colors': feat_in,
+                        'instance_labels': instance_labels,
+                        'inds_reverse': inds_reverse, 
+                    }
+                    torch.save(save_dict, '{}/{}.pth'.format(op_dir, scan_name))
+                    # np.save(f'{op_dir}/{scan_name}_distill_fts.npy', predictions.cpu().numpy())
+                    # torch.save(locs_in, f'{op_dir}/{scan_name}_xyz.pt')
+                    # torch.save(inds_reverse, f'{op_dir}/{scan_name}_inds_reverse.pt')
+                    # torch.save(feat_in, f'{op_dir}/{scan_name}_color.pt')
                     
                     continue
                 

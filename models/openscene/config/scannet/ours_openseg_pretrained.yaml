@@ -43,7 +43,7 @@ TEST:
   test_gpu: [0]
   test_batch_size: 1
   test_repeats: 5
-  model_path: 'https://cvg-data.inf.ethz.ch/openscene/models/scannet_openseg.pth.tar'
+  model_path: ckpts/scannet_openseg.pth.tar
   save_folder:
 
 Distributed:
