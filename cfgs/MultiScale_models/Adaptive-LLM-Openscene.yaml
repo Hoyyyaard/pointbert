@@ -22,7 +22,7 @@ dataset : {
 model : {
   NAME: Openscene, 
 
-  quantization: False, 
+  quantization: True, 
 
   trans_dim: 768,
 
@@ -44,7 +44,7 @@ model : {
 }
 
 
-total_bs : 60
+total_bs : 1
 step_per_update : 1
 max_epoch : 1
 

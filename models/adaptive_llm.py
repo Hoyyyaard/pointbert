@@ -30,7 +30,7 @@ class OpensceneEncoder(nn.Module):
         self.region_npoints = self.encoder_config.REGION_N_POINTS
         self.instance_npoints = self.encoder_config.INSTANCE_N_POINTS
         
-    def forward(self, xyzs, pointcloud_features, level):
+    def forward(self, xyzs, pointcloud_features, level, valid_labels=None):
         B, _, dim = pointcloud_features.shape
         max_token_num = self.level_group_map['scene'][0]
         region_token_num = self.level_group_map['region'][0]
@@ -44,47 +44,48 @@ class OpensceneEncoder(nn.Module):
         region_idx = [li for li,l in enumerate(level) if l=='region']
         scene_idx = [li for li,l in enumerate(level) if l=='scene']
         
-        if len(instance_idx) > 0:
-            # For instance level we only need to avg pooling the features
-            instance_fts = pointcloud_features[instance_idx][:, :self.instance_npoints, :]
-            instance_fts = instance_fts.mean(1).unsqueeze(1)
-            ## Padding
-            padding_instance_embed = torch.zeros((instance_fts.shape[0], max_token_num-instance_token_num, instance_fts.shape[-1]), device=instance_fts.device)
-            instance_fts = torch.cat([padding_instance_embed, instance_fts], dim=1)
-            all_fts[instance_idx] = instance_fts
-            for id in instance_idx:
-                all_fts_mask[id, -instance_token_num:] = 1
+        # if len(instance_idx) > 0:
+        #     # For instance level we only need to avg pooling the features
+        #     instance_fts = pointcloud_features[instance_idx][:, :self.instance_npoints, :]
+        #     instance_fts = instance_fts.mean(1).unsqueeze(1)
+        #     ## Padding
+        #     padding_instance_embed = torch.zeros((instance_fts.shape[0], max_token_num-instance_token_num, instance_fts.shape[-1]), device=instance_fts.device)
+        #     instance_fts = torch.cat([padding_instance_embed, instance_fts], dim=1)
+        #     all_fts[instance_idx] = instance_fts
+        #     for id in instance_idx:
+        #         all_fts_mask[id, -instance_token_num:] = 1
         
         # For region and scene level we need to group and gather the features
         if len(scene_idx) > 0:
             self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['scene']
             scene_fts = pointcloud_features[scene_idx][:, :self.scene_npoints, :]
             xyz = xyzs[scene_idx][:, :self.scene_npoints, :]
-            scene_pointclouds = torch.cat([xyz, scene_fts], dim=-1)
+            scene_pointclouds = torch.cat([xyz, scene_fts, valid_labels.unsqueeze(-1)], dim=-1).contiguous()
             ## batch_size, num_group, group_size, 768
             scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds)
             ## Dop xyz
-            scene_fts = scene_neighborhood[... , 3:].mean(-2)
+            valid_neighborhood = scene_neighborhood[... , -1]
+            scene_fts = scene_neighborhood[... , 3:-1].mean(-2)
             all_fts[scene_idx] = scene_fts
-            all_fts_mask[scene_idx] = 1
+            all_fts_mask[scene_idx] = (valid_neighborhood.sum(-1) > 0).float()
         
-        if len(region_idx) > 0:
-            self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['region']
-            region_fts = pointcloud_features[region_idx][:, :self.region_npoints, :]
-            xyz = xyzs[region_idx][:, :self.region_npoints, :]
-            region_pointclouds = torch.cat([xyz, region_fts], dim=-1)
-            ## batch_size, num_group, group_size, 768
-            region_neighborhood, region_center = self.pointcloud_tokenizer(region_pointclouds)
-            ## Dop xyz
-            region_fts = region_neighborhood[... , 3:].mean(-2)
-            ## Padding
-            padding_region_embed = torch.zeros((region_fts.shape[0], max_token_num-region_token_num, region_fts.shape[-1]), device=region_fts.device)
-            region_fts = torch.cat([padding_region_embed, region_fts], dim=1)
-            all_fts[region_idx] = region_fts
-            for id in region_idx:
-                all_fts_mask[id, -region_token_num:] = 1
+        # if len(region_idx) > 0:
+        #     self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['region']
+        #     region_fts = pointcloud_features[region_idx][:, :self.region_npoints, :]
+        #     xyz = xyzs[region_idx][:, :self.region_npoints, :]
+        #     region_pointclouds = torch.cat([xyz, region_fts], dim=-1)
+        #     ## batch_size, num_group, group_size, 768
+        #     region_neighborhood, region_center = self.pointcloud_tokenizer(region_pointclouds)
+        #     ## Dop xyz
+        #     region_fts = region_neighborhood[... , 3:].mean(-2)
+        #     ## Padding
+        #     padding_region_embed = torch.zeros((region_fts.shape[0], max_token_num-region_token_num, region_fts.shape[-1]), device=region_fts.device)
+        #     region_fts = torch.cat([padding_region_embed, region_fts], dim=1)
+        #     all_fts[region_idx] = region_fts
+        #     for id in region_idx:
+        #         all_fts_mask[id, -region_token_num:] = 1
         
-        return all_fts, all_fts_mask
+        return all_fts, all_fts_mask, scene_center
         
         
 
@@ -139,16 +140,22 @@ class AdaptiveLLM(nn.Module):
             self.encoder = PointTransformer(self._encoder_config)
         else:
             self.encoder = OpensceneEncoder(self._encoder_config)
-        
+    
+        self.xyz_projection = nn.Sequential(
+            nn.Linear(3 , 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+        )
         self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
+            nn.Linear(self._encoder_config.trans_dim + 128 , self._llm_config.hidden_size),
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             nn.ReLU(),
         )
-        self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
+        # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
         
     def wrap_fsdp(self):
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -284,17 +291,14 @@ class AdaptiveLLM(nn.Module):
                 # else:
                 vision_mask = torch.ones_like(vision_embed[..., 0])
             else:
-                vision_embed, vision_mask = self.encoder(points, data_dict['features'], level)
+                vision_embed, vision_mask, center = self.encoder(points, data_dict['features'], level, data_dict['valid_label'])
         
         vision_embed.requires_grad_(True)
-        vision_embed = vision_embed.to(self.dtype)
-        # if torch.isnan(vision_embed).any():
-        #     a = 1
+        center.requires_grad_(True)
+        vision_embed = torch.cat([vision_embed, self.xyz_projection(center)], dim=-1)
+        vision_embed = vision_embed
         vision_embed = self.encoder_to_llm_projection(vision_embed)
-        # if torch.isnan(vision_embed).any():
-        #     a = 1
-        # embedding_layer = self.llm.get_input_embeddings()
-        
+
         if not eval:
             
             input_mask = data_dict['attention_mask']
@@ -311,7 +315,7 @@ class AdaptiveLLM(nn.Module):
             #     output_attentions=False,
             # )
             outputs = self.llm(
-                vision_embeds=vision_embed,
+                vision_embeds=vision_embed.to(self.dtype),
                 vision_mask=vision_mask.to(self.dtype),
                 input_ids=input_ids,
                 attention_mask=input_mask.to(self.dtype),
@@ -325,8 +329,6 @@ class AdaptiveLLM(nn.Module):
                 mask = gradient_mask.to(self.dtype),
             )
             
-            # if torch.isnan(outputs.logits).any():
-            #     a = 1
             
             return loss
         
@@ -360,11 +362,11 @@ class AdaptiveLLM(nn.Module):
                 #     max_length=128,
                 #     **caption_config,
                 # )
-                vision_embed_per_batch = vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype)
+                # vision_embed_per_batch = vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype)
                 output = generation(
                     self.llm, 
-                    vision_embeds=vision_embed_per_batch,
-                    vision_mask=torch.ones_like(vision_embed_per_batch[..., 0], dtype=self.dtype),
+                    vision_embeds=vision_embed[batch_id].unsqueeze(0).to(self.dtype),
+                    vision_mask=vision_mask[batch_id].unsqueeze(0).to(self.dtype),
                     input_ids=sample_instruction[sample_mask == 1].unsqueeze(0),
                     attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0), dtype=self.dtype),
                     max_length=128,   

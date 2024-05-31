@@ -1116,7 +1116,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             if not self.OPENSCENE:
                 points = _augment_pointcloud(points)
-                points = self.pc_norm(points)
+            points = self.pc_norm(points)
             
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
@@ -1136,6 +1136,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
+                ret_dict['valid_label'] = np.ones_like(instance_labels)
             
             intruction = random.choice(TASK_PROMPT[task_name])
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
@@ -1179,12 +1180,18 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 max_bound = center + fixed_whl / 2.0
                 indices_within_bbox = np.where(np.all((points >= min_bound) & (points <= max_bound), axis=1))[0]
                 
-                points = points[indices_within_bbox]
-                colors = colors[indices_within_bbox]
-                instance_labels = instance_labels[indices_within_bbox]
-                features = features[indices_within_bbox]
+                # points = points[indices_within_bbox]
+                # colors = colors[indices_within_bbox]
+                # instance_labels = instance_labels[indices_within_bbox]
+                # features = features[indices_within_bbox]
                 
-                points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._region_npoint)
+                # points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._region_npoint)
+                
+                level = 'scene'
+                valid_label = np.zeros_like(instance_labels)
+                valid_label[indices_within_bbox] = 1
+                points, colors, valid_label, features = self.down_sample(points, colors, valid_label, features, self._npoint)
+                points = self.pc_norm(points)
             
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
@@ -1226,6 +1233,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
+                ret_dict['valid_label'] = valid_label
             
             ret_dict['answers'] = answers
             ret_dict['question'] = intruction
@@ -1262,12 +1270,16 @@ class SceneVerseLLMPretrainDataset(Dataset):
             else:
                 points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
                 instance_id = int(anno['target_id'])
-                object_points = points[instance_labels == instance_id]
-                object_colors = colors[instance_labels == instance_id]
-                features = features[instance_labels == instance_id]
-                instance_labels = instance_labels[instance_labels == instance_id]
-                points, colors, instance_labels, features = self.down_sample(object_points, object_colors, instance_labels, features, npoint=self._instance_npoint)
-            
+                # object_points = points[instance_labels == instance_id]
+                # object_colors = colors[instance_labels == instance_id]
+                # features = features[instance_labels == instance_id]
+                # instance_labels = instance_labels[instance_labels == instance_id]
+                # points, colors, instance_labels, features = self.down_sample(object_points, object_colors, instance_labels, features, npoint=self._instance_npoint)
+                level = 'scene'
+                valid_label = np.zeros_like(instance_labels)
+                valid_label[instance_labels == instance_id] = 1
+                points, colors, valid_label, features = self.down_sample(points, colors, valid_label, features, npoint=self._npoint)
+                points = self.pc_norm(points)
             
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
@@ -1282,11 +1294,12 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'level': level,
                 'scan_name': scan_name,
                 'task_name': task_name,
-                'episode_id': data['episode_id']
+                'episode_id': data['episode_id'],
             }
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
+                ret_dict['valid_label'] = valid_label
             
             # HM3D only has annotation:"the poinclouds of xxx"
             if not scan_name == 'HM3D':
@@ -1729,6 +1742,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
+                ret_dict['valid_label'] = np.ones_like(instance_labels)
             
             question = anno['question']
             intruction = random.choice(TASK_PROMPT[task_name]).format(question=question)
@@ -1778,6 +1792,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
+                ret_dict['valid_label'] = np.ones_like(instance_labels)
             
             intruction = anno['question']
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
@@ -1802,50 +1817,50 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             return ret_dict
         
         # Object Caption
-        elif task_name == 'object_caption':
-            instance_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
-            object_points = points[instance_labels == instance_id]
-            object_colors = colors[instance_labels == instance_id]
-            instance_labels = instance_labels[instance_labels == instance_id]
-            points, colors, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
-            points = _augment_pointcloud(points)
-            points = self.pc_norm(points)
+        # elif task_name == 'object_caption':
+        #     instance_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
+        #     object_points = points[instance_labels == instance_id]
+        #     object_colors = colors[instance_labels == instance_id]
+        #     instance_labels = instance_labels[instance_labels == instance_id]
+        #     points, colors, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
+        #     points = _augment_pointcloud(points)
+        #     points = self.pc_norm(points)
             
-            # points = np.concatenate([points, colors/255], 1)
-            points = _padding_pointcloud(points)
+        #     # points = np.concatenate([points, colors/255], 1)
+        #     points = _padding_pointcloud(points)
             
-            ret_dict = {
-                'points': points.astype(np.float32),
-                # 'colors': colors.astype(np.float32),
-                'num_groups': self._instance_num_groups,
-                'group_size': self._instance_group_size,
-                'dataset_name': dataset_name,
-                'level': 'instance',
-                'scan_name': scan_name,
-                'task_name': task_name,
-                'episode_id': data['episode_id']
-            }
+        #     ret_dict = {
+        #         'points': points.astype(np.float32),
+        #         # 'colors': colors.astype(np.float32),
+        #         'num_groups': self._instance_num_groups,
+        #         'group_size': self._instance_group_size,
+        #         'dataset_name': dataset_name,
+        #         'level': 'instance',
+        #         'scan_name': scan_name,
+        #         'task_name': task_name,
+        #         'episode_id': data['episode_id']
+        #     }
             
-            intruction = random.choice(TASK_PROMPT[task_name])
-            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+        #     intruction = random.choice(TASK_PROMPT[task_name])
+        #     prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
-            # ret_dict['question'] = intruction
-            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+        #     # ret_dict['question'] = intruction
+        #     ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+        #     ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
-            answers = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
-            # ret_dict['answers'] = answers
-            llm_inputs = self.tokenizer.batch_encode_plus(
-            [' '.join((intruction, answers, self.tokenizer.eos_token))],
-            **self.tokenizer_config
-            )
+        #     answers = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
+        #     # ret_dict['answers'] = answers
+        #     llm_inputs = self.tokenizer.batch_encode_plus(
+        #     [' '.join((intruction, answers, self.tokenizer.eos_token))],
+        #     **self.tokenizer_config
+        #     )
             
-            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
-            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
-            ret_dict['gradient_mask'] = \
-                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+        #     ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+        #     ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+        #     ret_dict['gradient_mask'] = \
+        #         (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
             
-            return ret_dict
+        #     return ret_dict
         
         elif task_name == 'object_grouding' or task_name == 'object_caption_given_bbox':
             tgt_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
@@ -1911,6 +1926,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
+                ret_dict['valid_label'] = np.ones_like(instance_labels)
             
             caption = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
             if task_name == 'object_grouding':
