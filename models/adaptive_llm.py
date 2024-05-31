@@ -117,22 +117,23 @@ class AdaptiveLLM(nn.Module):
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
                                             low_cpu_mem_usage=True,)
-            self.llm.model.gradient_checkpointing_enable()
-            self.llm.model.gradient_checkpointing = True
-            print_log("Gradient checkpointing is enabled")
+            if finetune:
+                self.llm.model.gradient_checkpointing_enable()
+                self.llm.model.gradient_checkpointing = True
+                print_log("Gradient checkpointing is enabled")
         
         # FIXME
         # Expand LLM vocalubary when finetune as there are grouding data
-        # if finetune:
-        #     special_tokens = ['<obj>', '</obj>']
-        #     xyz_prompt = 'loc{}'
-        #     for i in range(255):
-        #         special_tokens.append(xyz_prompt.format(i))
-        #     whl_prompt = 'whl{}'
-        #     for i in range(255):
-        #         special_tokens.append(whl_prompt.format(i))
-        #     self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
-        #     self.llm.resize_token_embeddings(len(self.tokenizer))
+        if finetune:
+            special_tokens = ['<obj>', '</obj>']
+            xyz_prompt = '<loc{}>'
+            for i in range(255):
+                special_tokens.append(xyz_prompt.format(i))
+            whl_prompt = '<whl{}>'
+            for i in range(255):
+                special_tokens.append(whl_prompt.format(i))
+            self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
+            self.llm.resize_token_embeddings(len(self.tokenizer))
         
         if not self.OPENSCENE:
             self.encoder = PointTransformer(self._encoder_config)
@@ -206,19 +207,19 @@ class AdaptiveLLM(nn.Module):
     def load_model_from_ckpt(self, bert_ckpt_path, args, finetune=False):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
         ckpt = torch.load(bert_ckpt_path, map_location=map_location)
-        # if not finetune:
-        #     base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
-        #     for k in list(base_ckpt.keys()):
-        #         if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
-        #             base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
-        #         elif k.startswith('base_model'):
-        #             base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
-        #         del base_ckpt[k]
-        # else:
-        #     base_ckpt = ckpt['base_model']
+        if not finetune:
+            base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
+            for k in list(base_ckpt.keys()):
+                if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
+                    base_ckpt[k.replace("transformer_q.", "encoder.")] = base_ckpt[k]
+                elif k.startswith('base_model'):
+                    base_ckpt[k.replace("base_model.", "encoder.")] = base_ckpt[k]
+                del base_ckpt[k]
+        else:
+            base_ckpt = ckpt['base_model']
             
         # uclip2
-        base_ckpt = {k.replace("module.point_encoder.", "encoder."): v for k, v in ckpt['state_dict'].items() if k.find('point_encoder') != -1}
+        # base_ckpt = {k.replace("module.point_encoder.", "encoder."): v for k, v in ckpt['state_dict'].items() if k.find('point_encoder') != -1}
             
         incompatible = self.load_state_dict(base_ckpt, strict=False)
 

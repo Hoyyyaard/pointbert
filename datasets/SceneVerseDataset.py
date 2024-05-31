@@ -791,8 +791,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
                                                 }
                                             })
         self.all_scene_caption.extend(extend_leo_scene_caption)
-        # if config.subset == 'train':
-        #     self.all_scene_caption = self.all_scene_caption * 2
+        if config.subset == 'train':
+            self.all_scene_caption = self.all_scene_caption * 2
         
         # Load some grouding scene caption data ~107k from GroundLLM https://arxiv.org/pdf/2405.10370
         # grounding_scene_caption_anno = json.load(open('data/SceneVerse/ScanNet/annotations/scene_caption/groundedscenecaption_format.json', 'r'))
@@ -817,9 +817,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         # dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
-            self.all_scene_caption = self.all_scene_caption[:-2000]
-            self.all_relation_caption = self.all_relation_caption[:-2000]
-            self.all_object_caption = self.all_object_caption[:-2000]
+            # self.all_scene_caption = self.all_scene_caption[:-2000]
+            # self.all_relation_caption = self.all_relation_caption[:-2000]
+            # self.all_object_caption = self.all_object_caption[:-2000]
             self.all_scene_caption = self.all_scene_caption[:100000]
             self.all_relation_caption = self.all_relation_caption[:100000]
             self.all_object_caption = self.all_object_caption[:100000]
@@ -1334,13 +1334,17 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self.tokenizer.padding_side = 'right'
         
         special_tokens = ['<obj>', '</obj>']
-        xyz_prompt = 'loc{}'
+        xyz_prompt = '<loc{}>'
         for i in range(255):
             special_tokens.append(xyz_prompt.format(i))
-        whl_prompt = 'whl{}'
+        whl_prompt = '<whl{}>'
         for i in range(255):
             special_tokens.append(whl_prompt.format(i))
         self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
+        
+        # If use openscene as encoder
+        self.OPENSCENE = config.OPENSCENE
+        self._openscene_root = 'data/SceneVerse/OpenScene_Scan_Features'
         
         # Load scene level data
         self._npoint = config.N_POINTS
@@ -1438,24 +1442,24 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         ## All in scene_id question answer format
         self.all_scene_understanding = []
         ## Only in train
-        # if config.subset == 'train':
-        #     embodied_dialogue_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_dialogue_filtered_{config.subset}.json'))
-        #     for ed in embodied_dialogue_anno:
-        #         scan_name = ed['scene_id']
-        #         self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ed, "task_name": "scene_understanding"})
-        #     embodied_planning_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_planning_filtered_{config.subset}.json'))
-        #     for ep in embodied_planning_anno:
-        #         scan_name = ep['scene_id']
-        #         self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ep, "task_name": "scene_understanding"})
-        #     embodied_question_answer_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_question_answer_{config.subset}.json'))
-        #     for eqa in embodied_question_answer_anno:
-        #         scan_name = eqa['scene_id']
-        #         self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":eqa, "task_name": "scene_understanding"})
+        if config.subset == 'train':
+            embodied_dialogue_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_dialogue_filtered_{config.subset}.json'))
+            for ed in embodied_dialogue_anno:
+                scan_name = ed['scene_id']
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ed, "task_name": "scene_understanding"})
+            embodied_planning_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_planning_filtered_{config.subset}.json'))
+            for ep in embodied_planning_anno:
+                scan_name = ep['scene_id']
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ep, "task_name": "scene_understanding"})
+            embodied_question_answer_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_question_answer_{config.subset}.json'))
+            for eqa in embodied_question_answer_anno:
+                scan_name = eqa['scene_id']
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":eqa, "task_name": "scene_understanding"})
         scene_caption_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_scene_description_{config.subset}.json'))
         for sc in scene_caption_anno:
             scan_name = sc['scene_id']
             self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":sc, "task_name": "scene_understanding"})
-        self.all_scene_understanding = self.all_scene_understanding * 30
+        # self.all_scene_understanding = self.all_scene_understanding * 30
 
         print_log(f'[DATASET] {len(self.all_scene_qa)} scene qa were loaded from scan data', logger = 'SceneVerse')
         # print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data', logger = 'SceneVerse')
@@ -1587,16 +1591,28 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         return points, colors, pcds, instance_labels, inst_to_label
     
     def _load_scan_data(self, scan_name, dataset_name):
-        dataset_root = os.path.join(self._all_dataset_root, dataset_name)
-        annotation_root = os.path.join(dataset_root, 'annotations')
-        scan_data_root = os.path.join(dataset_root, 'scan_data')
-        
-        inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
-        pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
+        if not self.OPENSCENE:
+            dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+            annotation_root = os.path.join(dataset_root, 'annotations')
+            scan_data_root = os.path.join(dataset_root, 'scan_data')
+            
+            inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+            pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
 
-        points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
-        
-        return points, colors, pcds, instance_labels, inst_to_label
+            points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
+            features = None
+        else:
+            dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+            scan_data_root = os.path.join(dataset_root, 'scan_data')
+            inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}")) 
+            dataset_root = os.path.join(self._openscene_root, dataset_name)
+            dict = torch.load(os.path.join(dataset_root, scan_name), map_location='cpu')
+            points = dict['points'].numpy().astype(np.float32)
+            colors = dict['colors'].numpy()
+            features = dict['features'].numpy().astype(np.float32)
+            instance_labels = dict['instance_labels'].numpy()
+        return points, colors, features, instance_labels, inst_to_label
         
     def convert_pc_to_box(self, obj_pc):
         xmin = np.min(obj_pc[:,0])
@@ -1609,12 +1625,13 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         box_size = np.array([xmax-xmin, ymax-ymin, zmax-zmin])
         return center, box_size
     
-    def down_sample(self, points, colors, instance_labels=None, npoint=None):
+    def down_sample(self, points, colors, instance_labels=None, featrues=None, npoint=None):
         pcd_idxs = np.random.choice(len(points), size=npoint, replace=len(points) < npoint)
         points = points[pcd_idxs]
         colors = colors[pcd_idxs]
         instance_labels = instance_labels[pcd_idxs] if not instance_labels is None else None
-        return points, colors, instance_labels
+        featrues = featrues[pcd_idxs] if not featrues is None else None
+        return points, colors, instance_labels, featrues
     
     def pc_norm(self, pc):
         """ pc: NxC, return NxC """
@@ -1629,7 +1646,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
     
     def _encode_box_coords(self, gt_box_centers_normalized, gt_box_sizes_normalized):
         grid_size_3d = 255
-        BOX_FORMAT = '<obj>{}, {}, {}, {}, {}, {}</obj>'
+        BOX_FORMAT = '<obj> <loc{}> <loc{}> <loc{}> <whl{}> <whl{}> <whl{}> </obj>'
         center_normalized = gt_box_centers_normalized
         size_normalized = gt_box_sizes_normalized
         box_normalized = np.hstack((center_normalized, size_normalized))    # (-1, 6)
@@ -1685,15 +1702,15 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             return_tensors='np'
         )
 
-        points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+        points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
 
         if task_name == 'scene_qa':
             
-            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
+            points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._npoint)
             
-            points = _augment_pointcloud(points)
-            
-            points = self.pc_norm(points)
+            if not self.OPENSCENE:
+                points = _augment_pointcloud(points)
+                points = self.pc_norm(points)
             
             # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
@@ -1709,6 +1726,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'task_name': task_name,
                 'episode_id': data['episode_id']
             }
+            
+            if self.OPENSCENE:
+                ret_dict['features'] = _padding_pointcloud(features)
             
             question = anno['question']
             intruction = random.choice(TASK_PROMPT[task_name]).format(question=question)
@@ -1735,9 +1755,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         
         # Scene Caption
         elif task_name == 'scene_understanding':
-            points, colors, instance_labels = self.down_sample(points, colors, instance_labels, self._npoint)
-            points = _augment_pointcloud(points)
-            points = self.pc_norm(points)
+            points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._npoint)
+            
+            if not self.OPENSCENE:
+                points = _augment_pointcloud(points)
+                points = self.pc_norm(points)
             
             # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
@@ -1753,6 +1775,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'task_name': task_name,
                 'episode_id': data['episode_id']
             }
+            
+            if self.OPENSCENE:
+                ret_dict['features'] = _padding_pointcloud(features)
             
             intruction = anno['question']
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
@@ -1825,20 +1850,21 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         elif task_name == 'object_grouding' or task_name == 'object_caption_given_bbox':
             tgt_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
             
-            points = _augment_pointcloud(points)
+            if not self.OPENSCENE:
+                points = _augment_pointcloud(points)
             
             # First check if target object's point less than 50 which will cause has no object point after downsample
             dense_object_points = points[instance_labels == tgt_id]
             dense_object_colors = colors[instance_labels == tgt_id]
             if len(dense_object_points) < 25:
                 sample_points = self._npoint - len(dense_object_points)
-                points, colors, instance_labels = self.down_sample(points, colors, instance_labels, npoint=sample_points)
+                points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, npoint=sample_points)
                 points = np.concatenate((dense_object_points, points), axis=0)
                 colors = np.concatenate((dense_object_colors, colors), axis=0)
                 points = self.pc_norm(points)
                 object_points = dense_object_points
             else:
-                points, colors, instance_labels = self.down_sample(points, colors, instance_labels, npoint=self._npoint)
+                points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, npoint=self._npoint)
                 points = self.pc_norm(points)
                 object_points = points[instance_labels == tgt_id]
                 
@@ -1882,6 +1908,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'task_name': task_name,
                 'episode_id': data['episode_id']
             }
+            
+            if self.OPENSCENE:
+                ret_dict['features'] = _padding_pointcloud(features)
             
             caption = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
             if task_name == 'object_grouding':

@@ -52,7 +52,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --config cfgs/MultiScale_models/Adaptive-LLM-Openscene.yaml \
-    --exp_name 0528_Pretrain_EqualData_Batch_From[0526_Multiscale_Pointbert_Pretrain_WRgb_300Epoch] \
-    --ckpt experiments/Point-BERT/MultiScale_models/0526_Multiscale_Pointbert_Pretrain_WRgb_300Epoch/ckpt-last.pth \
-    # --resume
+    --exp_name 0530_Pretrain_EqualData_Batch_From[Openscene] \
+    --resume
 

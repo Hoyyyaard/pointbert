@@ -214,9 +214,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 curr_nan_times = 0
                 
                 if not finetune:
-                    torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=10)
+                    torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=1)
                 else:
-                    torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=10)
+                    torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=1)
                     
                     # for name, param in base_model.module.named_parameters():
                     #     if torch.isnan(param).any():
@@ -228,9 +228,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                     optimizer.step()
                     base_model.zero_grad()
                     
-                for n,p in base_model.module.named_parameters():
-                    if torch.isnan(p).any():
-                        print(n)
+                # for n,p in base_model.module.named_parameters():
+                #     if torch.isnan(p).any():
+                #         print(n)
                         
                 acc_step = int(len(train_dataloader) * epoch + idx)
                 if isinstance(scheduler, list):
@@ -285,7 +285,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
             if epoch % args.val_freq == 0 :
                 # Validate the current model
-                metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger)
+                metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
 
                 # Save ckeckpoints
                 if metrics.better_than(best_metrics):

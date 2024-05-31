@@ -34,7 +34,7 @@ model : {
 }
 
 finetune : True
-total_bs : 120
+total_bs : 60
 step_per_update : 1
 max_epoch : 5
 

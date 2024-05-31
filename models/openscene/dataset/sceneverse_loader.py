@@ -47,10 +47,8 @@ class FusedFeatureLoader(Point3DLoader):
         locs_in, feats_in, labels_in = data[0], data[1], data[-1] # xyz, rgb, instance_label
         
         # labels_in[labels_in < 0] = 0
-        try:
-            labels_in = labels_in.astype(np.uint8)
-        except:
-            labels_in = np.zeros_like(locs_in[:, 0], dtype=np.uint8)
+        if labels_in is None:
+            labels_in = np.zeros_like(locs_in[:, 0])
 
         locs = locs_in
         mask_chunk = torch.ones_like(torch.from_numpy(labels_in)).bool()
@@ -71,7 +69,7 @@ class FusedFeatureLoader(Point3DLoader):
             feats = torch.ones(coords.shape[0], 3)
         labels = torch.from_numpy(labels).long()
         
-        return coords, feats, labels, None, mask, torch.from_numpy(inds_reconstruct).long(), torch.from_numpy(locs_in), torch.from_numpy(feats_in), torch.from_numpy(labels_in), self.data_paths[index]
+        return coords, feats, labels, None, mask, torch.from_numpy(inds_reconstruct).long(), torch.from_numpy(locs_in), torch.from_numpy(feats_in), torch.from_numpy(labels_in).long(), self.data_paths[index]
 
 def collation_fn(batch):
     '''
