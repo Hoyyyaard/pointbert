@@ -22,7 +22,10 @@ dataset : {
 model : {
   NAME: Openscene, 
 
-  quantization: True, 
+  DTYPE: FP32,
+
+  distributed: FSDP,  # DDP, FSDP
+  quantization: False,
 
   trans_dim: 768,
 
@@ -44,7 +47,7 @@ model : {
 }
 
 
-total_bs : 1
+total_bs : 60
 step_per_update : 1
 max_epoch : 1
 

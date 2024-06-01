@@ -79,9 +79,9 @@ def get_args():
         raise ValueError(
             '--resume and --start_ckpts cannot be both activate')
 
-    if args.test and args.ckpts is None:
-        raise ValueError(
-            'ckpts shouldnt be None while test mode')
+    # if args.test and args.ckpts is None:
+    #     raise ValueError(
+    #         'ckpts shouldnt be None while test mode')
 
     if args.finetune_model and args.ckpts is None:
         raise ValueError(

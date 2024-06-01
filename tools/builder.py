@@ -191,14 +191,7 @@ def save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, prefix,
 
 def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None, finetune=False):
     
-    if finetune:
-        save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        with FSDP.state_dict_type(
-            base_model, StateDictType.FULL_STATE_DICT, save_policy
-        ):
-            weight_ckpt = base_model.state_dict()
-    else:
-        weight_ckpt = base_model.module.state_dict() if args.distributed  else base_model.state_dict()
+    weight_ckpt = base_model.state_dict()
 
     if args.local_rank == 0:
         parameter_names = list(weight_ckpt.keys())

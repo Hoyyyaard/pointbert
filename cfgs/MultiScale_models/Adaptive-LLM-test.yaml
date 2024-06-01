@@ -22,8 +22,8 @@ dataset : {
 model : {
   NAME: PointTransformer, 
 
-  DTYPE: FP32,
-  distributed: FSDP,  # DDP, FSDP
+  DTYPE: FP16,
+  distributed: DDP,  # DDP, FSDP
   
   quantization: False, 
 

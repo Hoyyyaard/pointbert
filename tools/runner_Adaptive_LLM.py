@@ -25,6 +25,7 @@ from torchvision import transforms
 from datasets import data_transforms
 from pointnet2_ops import pointnet2_utils
 from tools.dist import all_gather_dict, barrier, is_primary
+import torch.cuda.amp as amp
 
 train_transforms = transforms.Compose(
     [
@@ -69,7 +70,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
 
     # build model
     llm_config  = AutoConfig.from_pretrained('ckpts/Llama-2-7b-hf/config.json')
-    base_model = AdaptiveLLM(llm_config, config.model, finetune=finetune)
+    base_model = AdaptiveLLM(llm_config, config.model, finetune=finetune, logger=logger, args=args)
 
     # from IPython import embed; embed()
     
@@ -84,8 +85,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         for n, p in base_model.encoder.named_parameters():
             p.requires_grad = False
     
-    if args.use_gpu:
-        base_model.to(args.local_rank)
+    # if args.use_gpu:
+    #     base_model.to(args.local_rank)
     # print(torch.cuda.memory_summary())
     
     # parameter setting
@@ -93,10 +94,10 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
     best_metrics = Acc_Metric(0.)
     metrics = Acc_Metric(0.)
 
-    if finetune:
-        base_model.wrap_fsdp()
-        print_log('Using FSDP to fully finetune LLM')
-        # base_model.wrap_lora()
+    # if finetune:
+    #     base_model.wrap_fsdp()
+    #     print_log('Using FSDP to fully finetune LLM')
+    #     base_model.wrap_lora()
     
     # resume ckpts
     if args.resume:
@@ -116,33 +117,26 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         if args.sync_bn:
             base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
             print_log('Using Synchronized BatchNorm ...', logger = logger)
-        if not finetune:
-            base_model = nn.parallel.DistributedDataParallel(base_model, 
-                                                            device_ids=[args.local_rank % torch.cuda.device_count()]
-                                                            )
-            print_log('Using Distributed Data parallel ...' , logger = logger)
+            
+        base_model = base_model.wrap_model()
+
     else:
         print_log('Using Data parallel ...' , logger = logger)
         base_model = nn.DataParallel(base_model).cuda()
 
     # Train
     if not test :
-        print_log("Trainable parameters")
-        if not finetune:
-            if torch.cuda.current_device() == 0:
-                for n, p in base_model.module.named_parameters():
-                    if p.requires_grad:
-                        print_log(n)
-        else:
-            if torch.cuda.current_device() == 0:
-                for n, p in base_model.named_parameters():
-                    if p.requires_grad:
-                        print_log(n)
+        print_log("Trainable parameters", logger = logger)
+        if torch.cuda.current_device() == 0:
+            for n, p in base_model.named_parameters():
+                if p.requires_grad:
+                    print_log(n, logger = logger)
         
         # print(torch.cuda.memory_summary())
         
-        # optimizer & scheduler
+        scaler = amp.GradScaler()
         
+        # optimizer & scheduler
         optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
         
         if args.resume:
@@ -189,43 +183,34 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                         data_dict[k] = v.cuda()
                         if torch.isnan(data_dict[k]).any():
                             assert False
-                
-                
-                # Debug
 
                 data_time.update(time.time() - batch_start_time)
 
-                # assert points.size(1) == npoints
-                # As we have some grouding episode which do not suitable for pointcloud aug
-                # points = train_transforms(points)
-                loss = base_model(data_dict)
-                dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-                loss = loss / dist.get_world_size() 
+                with amp.autocast():
+                    loss = base_model(data_dict)
+                    dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                    loss = loss / dist.get_world_size() 
                 
                 if not math.isfinite(loss.item()):
                     if curr_nan_times < max_tolerant_nan:
-                        print_log("Loss in not finite. Skip this training step.")
+                        print_log("Loss in not finite. Skip this training step.", logger = logger)
                         curr_nan_times += 1
                         continue
                     else:
-                        print_log("Loss in not finite. Terminate training.")
+                        print_log("Loss in not finite. Terminate training.", logger = logger)
                         exit(-1)
-                loss.backward()
-                curr_nan_times = 0
                 
-                if not finetune:
-                    torch.nn.utils.clip_grad_norm_(parameters=base_model.module.parameters(), max_norm=1)
-                else:
-                    torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=1)
-                    
-                    # for name, param in base_model.module.named_parameters():
-                    #     if torch.isnan(param).any():
-                    #         pass
+                scaler.scale(loss).backward()
+                # loss.backward()
+                curr_nan_times = 0
+            
+                torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=1)
                     
                 # forward
                 if num_iter == config.step_per_update:
                     num_iter = 0
-                    optimizer.step()
+                    scaler.step(optimizer)
+                    # optimizer.step()
                     base_model.zero_grad()
                     
                 # for n,p in base_model.module.named_parameters():
@@ -249,14 +234,12 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 else:
                     losses.update([loss.item()])
 
-
                 if args.distributed:
                     torch.cuda.synchronize()
 
                 if train_writer is not None:
                     train_writer.add_scalar('Loss/Batch/Loss', loss.item(), n_itr)
                     train_writer.add_scalar('Loss/Batch/LR', optimizer.param_groups[0]['lr'], n_itr)
-
 
                 batch_time.update(time.time() - batch_start_time)
                 batch_start_time = time.time()
@@ -271,7 +254,6 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                     eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
                     print_log(f'ETA: {eta_str}', logger = logger)
                 
-                
             epoch_end_time = time.time()
 
             if train_writer is not None:
@@ -283,16 +265,17 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             # Debug
             barrier()
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
-            if epoch % args.val_freq == 0 :
-                # Validate the current model
-                metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
-
-                # Save ckeckpoints
-                if metrics.better_than(best_metrics):
-                    best_metrics = metrics
-                    builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger, finetune=finetune) 
             if (config.max_epoch - epoch) < 10:
                 builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
+            # if epoch % args.val_freq == 0 :
+            #     # Validate the current model
+            #     metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
+
+            #     # Save ckeckpoints
+            #     if metrics.better_than(best_metrics):
+            #         best_metrics = metrics
+            #         builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger, finetune=finetune) 
+            
         if train_writer is not None:
             train_writer.close()
         if val_writer is not None:
@@ -369,8 +352,9 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             for k,v in data_dict.items():
                 if isinstance(v, torch.Tensor):
                     data_dict[k] = v.cuda()
-                    
-            output_ids = base_model(data_dict, eval=True)
+            
+            with amp.autocast():
+                output_ids = base_model(data_dict, eval=True)
             outputs = dict(
                 output_ids=output_ids,
             )
@@ -384,18 +368,18 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                     gather_data_dict[k] = [item for sublist in zip(*v) for item in sublist]
             
             output_ids = outputs["output_ids"]  # batch x max_length
-            if not finetune:
-                answers = base_model.module.tokenizer.batch_decode(
-                    output_ids,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False
-                )
-            else:
-                answers = base_model.tokenizer.batch_decode(
-                    output_ids,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False
-                )
+            # if not finetune:
+            answers = base_model.module.tokenizer.batch_decode(
+                output_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False
+            )
+            # else:
+            #     answers = base_model.tokenizer.batch_decode(
+            #         output_ids,
+            #         skip_special_tokens=True,
+            #         clean_up_tokenization_spaces=False
+            #     )
             
             for idx in range(output_ids.shape[0]):
                 key = gather_data_dict['episode_id'][idx].item()
@@ -419,14 +403,13 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             )
         
             if is_primary():
-                print_log(f"\n----------------------Evaluation {k}-----------------------\n")
-                print_log(message)
+                print_log(f"\n----------------------Evaluation {k}-----------------------\n", logger = logger)
+                print_log(message, logger = logger)
                 _log_to_disk(args, message, corpus, v, score_per_caption, k, epoch)
             
         if args.distributed:
             torch.cuda.synchronize()
     
-        
     return Acc_Metric(0.)
 
 

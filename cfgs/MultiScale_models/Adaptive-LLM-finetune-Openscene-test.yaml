@@ -21,7 +21,8 @@ dataset : {
 model : {
   NAME: Openscene, 
 
-  DTYPE: FP32,
+  DTYPE: FP16,
+  distributed: DDP,  # DDP, FSDP
 
   quantization: False, 
 

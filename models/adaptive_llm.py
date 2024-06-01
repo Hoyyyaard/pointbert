@@ -11,6 +11,7 @@ from utils.checkpoint import get_missing_parameters_message, get_unexpected_para
 from models.dvae import Group
 import numpy as np
 import os 
+from utils.logger import *
 from pointnet2_ops import pointnet2_utils
 
 
@@ -90,13 +91,15 @@ class OpensceneEncoder(nn.Module):
         
 
 class AdaptiveLLM(nn.Module):
-    def __init__(self, llm_config, encoder_config, finetune=False):
+    def __init__(self, llm_config, encoder_config, finetune=False, logger=None, args=None):
         super(AdaptiveLLM, self).__init__()
         self._llm_config = llm_config
         self._encoder_config = encoder_config
-        self.dtype = torch.float16
+        self.dtype = torch.float32 if self._encoder_config.DTYPE == 'FP32' else torch.float16
         self.OPENSCENE = self._encoder_config.NAME == 'Openscene'
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf')
+        self.logger = get_logger(args.log_name)
+        self.args = args
         
         # For debug in 3090
         if encoder_config.quantization:
@@ -117,11 +120,11 @@ class AdaptiveLLM(nn.Module):
             self.llm = LlamaForCausalLM.from_pretrained('ckpts/Llama-2-7b-hf', 
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
-                                            low_cpu_mem_usage=True,)
-            if finetune:
-                self.llm.model.gradient_checkpointing_enable()
-                self.llm.model.gradient_checkpointing = True
-                print_log("Gradient checkpointing is enabled")
+                                            )
+
+            self.llm.model.gradient_checkpointing_enable()
+            self.llm.model.gradient_checkpointing = True
+            print_log("Gradient checkpointing is enabled", logger=self.logger)
         
         # FIXME
         # Expand LLM vocalubary when finetune as there are grouding data
@@ -140,7 +143,8 @@ class AdaptiveLLM(nn.Module):
             self.encoder = PointTransformer(self._encoder_config)
         else:
             self.encoder = OpensceneEncoder(self._encoder_config)
-    
+
+        # FIXME: Move to encoder
         self.xyz_projection = nn.Sequential(
             nn.Linear(3 , 128),
             nn.ReLU(),
@@ -156,7 +160,16 @@ class AdaptiveLLM(nn.Module):
             nn.ReLU(),
         )
         # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
-        
+        # self.xyz_projection = self.xyz_projection.to(self.dtype)
+    
+    def wrap_model(self):
+        if self._encoder_config.distributed == 'DDP':
+            return self.wrap_ddp()
+        elif self._encoder_config.distributed == 'FSDP':
+            return self.wrap_fsdp()
+        else:
+            assert False
+    
     def wrap_fsdp(self):
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
         from torch.distributed.fsdp.wrap import (
@@ -173,14 +186,19 @@ class AdaptiveLLM(nn.Module):
             },
         )
         self.llm = FSDP(self.llm, device_id=torch.cuda.current_device(), auto_wrap_policy=llama_auto_wrap_policy)
-        # tmp_module_list = []
-        # for li,layer in enumerate(self.llm.model.layers):
-        #     with enable_wrap(wrapper_cls=FSDP, device_id=torch.cuda.current_device()):
-        #         tmp_module_list.append(wrap(layer))    
-        # tmp_module_list = nn.ModuleList(tmp_module_list)
-        # setattr(self.llm.model, 'layers', tmp_module_list)
-        # with enable_wrap(wrapper_cls=FSDP, device_id=device_id):
-        #     self.llm.model.layers = wrap(self.llm.model.layers)
+        self.encoder = self.encoder.to(torch.cuda.current_device())
+        self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(torch.cuda.current_device())
+        self.xyz_projection = self.xyz_projection.to(torch.cuda.current_device())
+        print_log('Using FSDP')
+        return self
+    
+    def wrap_ddp(self):
+        self = self.to(torch.cuda.current_device())
+        self = nn.parallel.DistributedDataParallel(self, 
+                                                    device_ids=[self.args.local_rank % torch.cuda.device_count()]
+                                                    )
+        print_log('Using Distributed Data parallel' )
+        return self
     
     def _find_all_linear_names(self, model):
         cls = torch.nn.Linear
@@ -262,7 +280,6 @@ class AdaptiveLLM(nn.Module):
             # num_group = data_dict['num_groups'][0].item()
             # group_size = data_dict['group_size'][0].item()
             
-            # TODO
             num_group = data_dict['num_groups']
             group_size = data_dict['group_size']
             level = data_dict['level']
@@ -295,10 +312,12 @@ class AdaptiveLLM(nn.Module):
         
         vision_embed.requires_grad_(True)
         center.requires_grad_(True)
+        # center = center.to(self.dtype)
+        # vision_embed = vision_embed.to(self.dtype)
         vision_embed = torch.cat([vision_embed, self.xyz_projection(center)], dim=-1)
-        vision_embed = vision_embed
         vision_embed = self.encoder_to_llm_projection(vision_embed)
-
+        assert not torch.isnan(vision_embed).any()
+        assert not torch.isinf(vision_embed).any()
         if not eval:
             
             input_mask = data_dict['attention_mask']
@@ -315,7 +334,7 @@ class AdaptiveLLM(nn.Module):
             #     output_attentions=False,
             # )
             outputs = self.llm(
-                vision_embeds=vision_embed.to(self.dtype),
+                vision_embeds=vision_embed,
                 vision_mask=vision_mask.to(self.dtype),
                 input_ids=input_ids,
                 attention_mask=input_mask.to(self.dtype),
@@ -328,8 +347,8 @@ class AdaptiveLLM(nn.Module):
                 target = input_ids,
                 mask = gradient_mask.to(self.dtype),
             )
-            
-            
+            assert not torch.isnan(outputs.logits).any()
+            assert not torch.isnan(loss).any()
             return loss
         
         else:

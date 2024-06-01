@@ -1723,8 +1723,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             if not self.OPENSCENE:
                 points = _augment_pointcloud(points)
-                points = self.pc_norm(points)
-            
+                
+            points = self.pc_norm(points)
             # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
             
@@ -1773,7 +1773,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             if not self.OPENSCENE:
                 points = _augment_pointcloud(points)
-                points = self.pc_norm(points)
+            points = self.pc_norm(points)
             
             # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
