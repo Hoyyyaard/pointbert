@@ -4,6 +4,7 @@ import os
 import torch
 import torch.distributed as dist
 import subprocess
+import datetime
 
 
 def is_distributed():
@@ -88,7 +89,7 @@ def init_slurm_distributed(local_rank):
     addr = os.environ["MASTER_ADDR"]
     print(f"local rank: {str(local_rank)}, global rank: {(proc_id*num_gpus)+local_rank}, world size: {ntasks * num_gpus}, node: {ntasks}, port: {port}, addr: {addr}")
     torch.distributed.init_process_group(
-        backend=dist_backend, rank=(proc_id*num_gpus)+local_rank, world_size=ntasks * num_gpus
+        backend=dist_backend, rank=(proc_id*num_gpus)+local_rank, world_size=ntasks * num_gpus, timeout=datetime.timedelta(seconds=5400)
     )
     torch.distributed.barrier()
 

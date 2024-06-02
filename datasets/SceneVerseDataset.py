@@ -19,114 +19,114 @@ from transformers import AutoTokenizer
 TASK_PROMPT = {
     'object_caption': [
         '### human: describe this object ### assistant:',
-        '### human: provide a brief description of the given 3D object. ### assistant:',
-        '### human: offer a succinct explanation of the 3D object presented. ### assistant:',
-        '### human: give a short and clear explanation of the 3D object. ### assistant:',
-        '### human: describe the characteristics of this object ### assistant:',
-        '### human: give an overview of the object. ### assistant:',
-        '### human: explain the features of the object ### assistant:',
-        '### human: provide a concise description of the object. ### assistant:',
-        '### human: detail the attributes of this object. ### assistant:',
+        # '### human: provide a brief description of the given 3D object. ### assistant:',
+        # '### human: offer a succinct explanation of the 3D object presented. ### assistant:',
+        # '### human: give a short and clear explanation of the 3D object. ### assistant:',
+        # '### human: describe the characteristics of this object ### assistant:',
+        # '### human: give an overview of the object. ### assistant:',
+        # '### human: explain the features of the object ### assistant:',
+        # '### human: provide a concise description of the object. ### assistant:',
+        # '### human: detail the attributes of this object. ### assistant:',
     ],
     'scene_caption': [
-        '### human: describe the scene given 3D context. ### assistant:',
-        '### human: provide a description of the scene in the given 3D context. ### assistant:',
-        '### human: explain the details of the scene within the specified 3D context. ### assistant:',
-        '### human: offer an overview of the scene in the indicated 3D context. ### assistant:',
-        '### human: describe the features of the scene in the provided 3D context. ### assistant:',
-        '### human: detail the elements of the scene in the mentioned 3D context. ### assistant:',
-        '### human: give an explanation of the scene in the designated 3D context. ### assistant:',
-        '### human: summarize the scene in the described 3D context. ### assistant:',
-        '### human: illustrate the scene within the given 3D context. ### assistant:',
-        '### human: characterize the scene in the specific 3D context. ### assistant:',
+        '### human: describe the scene. ### assistant:',
+        # '### human: provide a description of the scene in the given 3D context. ### assistant:',
+        # '### human: explain the details of the scene within the specified 3D context. ### assistant:',
+        # '### human: offer an overview of the scene in the indicated 3D context. ### assistant:',
+        # '### human: describe the features of the scene in the provided 3D context. ### assistant:',
+        # '### human: detail the elements of the scene in the mentioned 3D context. ### assistant:',
+        # '### human: give an explanation of the scene in the designated 3D context. ### assistant:',
+        # '### human: summarize the scene in the described 3D context. ### assistant:',
+        # '### human: illustrate the scene within the given 3D context. ### assistant:',
+        # '### human: characterize the scene in the specific 3D context. ### assistant:',
     ],
     'region_caption': [
-        '### human: describe the relationship between the objects gievn part of the 3D scene. ### assistant:',
-        '### human: describe how the objects are related in the specified part of the 3D scene. ### assistant:',
-        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene. ### assistant:',
-        '### human: offer an explanation of the relationship between the objects in the described part of the 3D scene. ### assistant:',
-        '### human: detail the interaction between the objects in the given segment of the 3D scene. ### assistant:',
-        '### human: illustrate the relationship between the objects within the specified part of the 3D scene. ### assistant:',
-        '### human: summarize the connection between the objects in the mentioned part of the 3D scene. ### assistant:',
-        '### human: characterize the relationship between the objects in the provided part of the 3D scene. ### assistant:',
-        '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:',
-        '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:',
+        '### human: describe the position of the {object_name} in relation to the surrounding objects. ### assistant:',
+        # '### human: describe how the objects are related in the specified part of the 3D scene. ### assistant:',
+        # '### human: provide details on the relationship between the objects in the indicated part of the 3D scene. ### assistant:',
+        # '### human: offer an explanation of the relationship between the objects in the described part of the 3D scene. ### assistant:',
+        # '### human: detail the interaction between the objects in the given segment of the 3D scene. ### assistant:',
+        # '### human: illustrate the relationship between the objects within the specified part of the 3D scene. ### assistant:',
+        # '### human: summarize the connection between the objects in the mentioned part of the 3D scene. ### assistant:',
+        # '### human: characterize the relationship between the objects in the provided part of the 3D scene. ### assistant:',
+        # '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:',
+        # '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:',
     ],
-    'scene_caption_with_bbox': [
-        '### human: describe the scene given 3D context and output the location of these objects. ### assistant:',
-        '### human: provide a description of the scene in the given 3D context and point out these object in the scene. ### assistant:',
-        '### human: explain the details of the scene within the specified 3D context and locate them. ### assistant:',
-        '### human: offer an overview of the scene in the indicated 3D context and output the location of these objects. ### assistant:',
-        '### human: describe the features of the scene in the provided 3D context and output the location of these objects. ### assistant:',
-        '### human: detail the elements of the scene in the mentioned 3D context and output the location of these objects. ### assistant:',
-        '### human: give an explanation of the scene in the designated 3D context and output the location of these objects. ### assistant:',
-        '### human: summarize the scene in the described 3D context and point out these object in the scene. ### assistant:',
-        '### human: illustrate the scene within the given 3D context and point out these object in the scene. ### assistant:',
-        '### human: characterize the scene in the specific 3D context and point out these object in the scene. ### assistant:',
-    ],
-    'region_caption_with_bbox': [
-        '### human: describe the relationship between the objects gievn part of the 3D scene and output the location of these objects. ### assistant:',
-        '### human: describe how the objects are related in the specified part of the 3D scene and point out these object in the scene. ### assistant:',
-        '### human: provide details on the relationship between the objects in the indicated part of the 3D scene and locate them. ### assistant:',
-        '### human: offer an explanation of the relationship between the objects you located in the described part of the 3D scene. ### assistant:',
-        '### human: detail the interaction between the objects in the given segment of the 3D scene and output the location of these objects. ### assistant:',
-        '### human: find the position of the object and illustrate their relationship between them within the specified part of the 3D scene. ### assistant:',
-        '### human: summarize the connection between the objects in the mentioned part of the 3D scene and point out these location. ### assistant:',
-        '### human: characterize the relationship between the objects in the provided part of the 3D scene and output the location of these objects. ### assistant:',
-        '### human: outline the relationship between the objects in the designated part of the 3D scene and output the location of these objects. ### assistant:',
-        '### human: depict the interaction between the objects in the stated part of the 3D scene and output the location of these objects. ### assistant:',
-    ],
+    # 'scene_caption_with_bbox': [
+    #     '### human: describe the scene given 3D context and output the location of these objects. ### assistant:',
+    #     '### human: provide a description of the scene in the given 3D context and point out these object in the scene. ### assistant:',
+    #     '### human: explain the details of the scene within the specified 3D context and locate them. ### assistant:',
+    #     '### human: offer an overview of the scene in the indicated 3D context and output the location of these objects. ### assistant:',
+    #     '### human: describe the features of the scene in the provided 3D context and output the location of these objects. ### assistant:',
+    #     '### human: detail the elements of the scene in the mentioned 3D context and output the location of these objects. ### assistant:',
+    #     '### human: give an explanation of the scene in the designated 3D context and output the location of these objects. ### assistant:',
+    #     '### human: summarize the scene in the described 3D context and point out these object in the scene. ### assistant:',
+    #     '### human: illustrate the scene within the given 3D context and point out these object in the scene. ### assistant:',
+    #     '### human: characterize the scene in the specific 3D context and point out these object in the scene. ### assistant:',
+    # ],
+    # 'region_caption_with_bbox': [
+    #     '### human: describe the relationship between the objects gievn part of the 3D scene and output the location of these objects. ### assistant:',
+    #     '### human: describe how the objects are related in the specified part of the 3D scene and point out these object in the scene. ### assistant:',
+    #     '### human: provide details on the relationship between the objects in the indicated part of the 3D scene and locate them. ### assistant:',
+    #     '### human: offer an explanation of the relationship between the objects you located in the described part of the 3D scene. ### assistant:',
+    #     '### human: detail the interaction between the objects in the given segment of the 3D scene and output the location of these objects. ### assistant:',
+    #     '### human: find the position of the object and illustrate their relationship between them within the specified part of the 3D scene. ### assistant:',
+    #     '### human: summarize the connection between the objects in the mentioned part of the 3D scene and point out these location. ### assistant:',
+    #     '### human: characterize the relationship between the objects in the provided part of the 3D scene and output the location of these objects. ### assistant:',
+    #     '### human: outline the relationship between the objects in the designated part of the 3D scene and output the location of these objects. ### assistant:',
+    #     '### human: depict the interaction between the objects in the stated part of the 3D scene and output the location of these objects. ### assistant:',
+    # ],
     'object_grouding': [
         '### human: locate the object in the 3D scene given the object description {caption}. ### assistant:',
-        '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:',
-        '### human: identify the object in the 3D scene based on the given description {caption}. ### assistant:',
-        '### human: pinpoint the object in the 3D scene from the described details {caption}. ### assistant:',
-        '### human: determine the location of the object in the 3D scene using the description {caption}. ### assistant:',
-        '### human: locate the object within the 3D scene according to the description {caption}. ### assistant:',
-        '### human: ascertain the position of the object in the 3D scene given the description {caption}. ### assistant:',
-        '### human: find the position of the object in the 3D scene using the details provided {caption}. ### assistant:',
-        '### human: spot the object in the 3D scene based on the description {caption}. ### assistant:',
-        '### human: seek out the object in the 3D scene from the given details {caption}. ### assistant:',
-        '### human: identify where the object is located in the 3D scene using the description {caption}. ### assistant:',
+        # '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:',
+        # '### human: identify the object in the 3D scene based on the given description {caption}. ### assistant:',
+        # '### human: pinpoint the object in the 3D scene from the described details {caption}. ### assistant:',
+        # '### human: determine the location of the object in the 3D scene using the description {caption}. ### assistant:',
+        # '### human: locate the object within the 3D scene according to the description {caption}. ### assistant:',
+        # '### human: ascertain the position of the object in the 3D scene given the description {caption}. ### assistant:',
+        # '### human: find the position of the object in the 3D scene using the details provided {caption}. ### assistant:',
+        # '### human: spot the object in the 3D scene based on the description {caption}. ### assistant:',
+        # '### human: seek out the object in the 3D scene from the given details {caption}. ### assistant:',
+        # '### human: identify where the object is located in the 3D scene using the description {caption}. ### assistant:',
     ],
-    'scene_grouding':[
-        '### human: locate all objects given the 3D scene. ### assistant:',
-        '### human: identify all objects in the given 3D scene. ### assistant:',
-        '### human: find every object in the provided 3D scene. ### assistant:',
-        '### human: list all objects present in the specified 3D scene. ### assistant:',
-        '### human: pinpoint each object in the given 3D scene. ### assistant:',
-        '### human: locate every object in the described 3D scene. ### assistant:',
-        '### human: determine the location of all objects in the provided 3D scene. ### assistant:',
-        '### human: identify the position of each object in the given 3D scene. ### assistant:',
-        '### human: find and list all objects in the specified 3D scene. ### assistant:',
-        '### human: recognize all objects within the given 3D scene. ### assistant:',
-        '### human: enumerate every object in the provided 3D scene. ### assistant:',
-    ],
+    # 'scene_grouding':[
+    #     '### human: locate all objects given the 3D scene. ### assistant:',
+    #     '### human: identify all objects in the given 3D scene. ### assistant:',
+    #     '### human: find every object in the provided 3D scene. ### assistant:',
+    #     '### human: list all objects present in the specified 3D scene. ### assistant:',
+    #     '### human: pinpoint each object in the given 3D scene. ### assistant:',
+    #     '### human: locate every object in the described 3D scene. ### assistant:',
+    #     '### human: determine the location of all objects in the provided 3D scene. ### assistant:',
+    #     '### human: identify the position of each object in the given 3D scene. ### assistant:',
+    #     '### human: find and list all objects in the specified 3D scene. ### assistant:',
+    #     '### human: recognize all objects within the given 3D scene. ### assistant:',
+    #     '### human: enumerate every object in the provided 3D scene. ### assistant:',
+    # ],
     'object_caption_given_bbox':[
         '### human: describe the object in the 3D scene given the object bounding box {bbox}. ### assistant:',
-        '### human: provide a description of the object in the 3D scene using the given bounding box {bbox}. ### assistant:',
-        '### human: describe the object within the 3D scene based on the provided bounding box {bbox}. ### assistant:',
-        '### human: explain the features of the object in the 3D scene given its bounding box {bbox}. ### assistant:',
-        '### human: detail the characteristics of the object in the 3D scene using the bounding box {bbox}. ### assistant:',
-        '### human: offer a description of the object in the 3D scene from the given bounding box {bbox}. ### assistant:',
-        '### human: summarize the attributes of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:',
-        '### human: characterize the object in the 3D scene based on its bounding box {bbox}. ### assistant:',
-        '### human: give an overview of the object in the 3D scene using the bounding box information {bbox}. ### assistant:',
-        '### human: identify the features of the object in the 3D scene given the bounding box {bbox}. ### assistant:',
-        '### human: outline the details of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:',
+        # '### human: provide a description of the object in the 3D scene using the given bounding box {bbox}. ### assistant:',
+        # '### human: describe the object within the 3D scene based on the provided bounding box {bbox}. ### assistant:',
+        # '### human: explain the features of the object in the 3D scene given its bounding box {bbox}. ### assistant:',
+        # '### human: detail the characteristics of the object in the 3D scene using the bounding box {bbox}. ### assistant:',
+        # '### human: offer a description of the object in the 3D scene from the given bounding box {bbox}. ### assistant:',
+        # '### human: summarize the attributes of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:',
+        # '### human: characterize the object in the 3D scene based on its bounding box {bbox}. ### assistant:',
+        # '### human: give an overview of the object in the 3D scene using the bounding box information {bbox}. ### assistant:',
+        # '### human: identify the features of the object in the 3D scene given the bounding box {bbox}. ### assistant:',
+        # '### human: outline the details of the object in the 3D scene using the provided bounding box {bbox}. ### assistant:',
     ],
     'scene_qa':[
         '### human: answer the question about the 3D scene in short. {question} ### assistant:',
-        '### human: give a brief answer to the question about the 3D scene. {question} ### assistant:',
-        '### human: provide a short response to the 3D scene question. {question} ### assistant:',
-        '### human: respond concisely to the inquiry regarding the 3D scene. {question} ### assistant:',
-        '### human: offer a succinct answer to the 3D scene question. {question} ### assistant:',
-        '### human: briefly answer the question about the 3D scene. {question} ### assistant:',
-        '### human: give a short response to the question concerning the 3D scene. {question} ### assistant:',
-        '### human: provide a concise reply to the question about the 3D scene. {question} ### assistant:',
-        '### human: answer the inquiry on the 3D scene briefly. {question} ### assistant:',
-        '### human: give a brief response to the question related to the 3D scene. {question} ### assistant:',
-        '### human: offer a short answer to the question regarding the 3D scene. {question} ### assistant:',
+        # '### human: give a brief answer to the question about the 3D scene. {question} ### assistant:',
+        # '### human: provide a short response to the 3D scene question. {question} ### assistant:',
+        # '### human: respond concisely to the inquiry regarding the 3D scene. {question} ### assistant:',
+        # '### human: offer a succinct answer to the 3D scene question. {question} ### assistant:',
+        # '### human: briefly answer the question about the 3D scene. {question} ### assistant:',
+        # '### human: give a short response to the question concerning the 3D scene. {question} ### assistant:',
+        # '### human: provide a concise reply to the question about the 3D scene. {question} ### assistant:',
+        # '### human: answer the inquiry on the 3D scene briefly. {question} ### assistant:',
+        # '### human: give a brief response to the question related to the 3D scene. {question} ### assistant:',
+        # '### human: offer a short answer to the question regarding the 3D scene. {question} ### assistant:',
     ]
 }
 
@@ -677,7 +677,12 @@ class SceneVerseLLMPretrainDataset(Dataset):
             # ~41k
             scene_annos = annotations.get('scene_caption')
             for scan_name, captions in scene_annos.items():
-                self.all_scene_caption.extend([{'dataset_name':dataset_name, "scan_name":scan_name, "anno":{'utterance':cap}, "task_name": "scene_caption"} for cap in captions['captions']])
+                self.all_scene_caption.extend([{'dataset_name':dataset_name, 
+                                                "scan_name":scan_name, 
+                                                "anno":{'utterance':cap}, 
+                                                "task_name": "scene_caption",
+                                                'episode_id':'{}#{}#{}'.format(dataset_name, scan_name, ci)} 
+                                               for ci,cap in enumerate(captions['captions'])])
             
             # Process region caption: [dict_keys(['item_id', 'scan_id', 'target_id', 'instance_type', 'utterance']), xxx]  
             
@@ -689,7 +694,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 # Check if the pcd corresponding to the region caption exists
                 if path not in region_aug_pcd.keys() or path not in exist_relation_caption.keys():
                     continue
-                self.all_relation_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":ra, "task_name": "region_caption"})
+                self.all_relation_caption.append({'dataset_name':dataset_name, 
+                                                  "scan_name":scan_name, 
+                                                  "anno":ra, 
+                                                  "task_name": "region_caption",
+                                                  'episode_id':'{}#{}#{}'.format(dataset_name, scan_name, ra['utterance'])})
                 
                 ''' Code for filter region caption that has instance label more than 1 in the caption
                 region_data = np.load(os.path.join('data/SceneVerse/RegionAugData1', path), allow_pickle=True)
@@ -727,7 +736,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     # As some object instance pointcloud will miss after downsample, we only keep the object caption with pcd data large than threshold
                     if f'{dataset_name}_{scan_name}.pth_{oa["target_id"]}.npz' not in region_aug_pcd.keys():
                         continue
-                    self.all_object_caption.append({'dataset_name':dataset_name, "scan_name":scan_name, "anno":oa, "task_name": "object_caption"})
+                    self.all_object_caption.append({'dataset_name':dataset_name, 
+                                                    "scan_name":scan_name, 
+                                                    "anno":oa, 
+                                                    "task_name": "object_caption",
+                                                    'episode_id':'{}#{}#{}'.format(dataset_name, scan_name, oa['utterance'])})
 
         # with open('data/SceneVerse/valid_region_relation_path.json', 'w') as f:
         #     json.dump(valid_region_relation_path, f)
@@ -764,35 +777,39 @@ class SceneVerseLLMPretrainDataset(Dataset):
                                                         'item_id': obj_dict,
                                                         'scan_id': obj_dict,
                                                         'utterance': self.objaverse_data.obj_cap_dict[obj_dict]
-                                                        }})
+                                                        },
+                                                'episode_id': obj_dict})
         
         # Load some LEO scene caption data 
         leo_scene_train_caption = json.load(open('data/LEO_DATA/annotations/alignment/scene_caption/3rscan_scenecap_train.json', 'r'))
         leo_scene_val_caption = json.load(open('data/LEO_DATA/annotations/alignment/scene_caption/3rscan_scenecap_val.json', 'r'))
         extend_leo_scene_caption = []
         for scene_name, v in leo_scene_train_caption.items():
-            for cap in v:
+            for ci,cap in enumerate(v):
                 extend_leo_scene_caption.append({
                                             'dataset_name':'3RScan', 
                                             "scan_name":scene_name, 
                                             "task_name": "scene_caption",
                                             "anno":{
                                                     'utterance': cap['response']
-                                                }
+                                                },
+                                            'episode_id':'leo#{}#{}#{}'.format(dataset_name, scene_name, ci)
                                             })
         for scene_name, v in leo_scene_val_caption.items():
-            for cap in v:
+            for ci,cap in enumerate(v):
                 extend_leo_scene_caption.append({
                                             'dataset_name':'3RScan', 
                                             "scan_name":scene_name, 
                                             "task_name": "scene_caption",
                                             "anno":{
                                                     'utterance': cap['response']
-                                                }
+                                                },
+                                            'episode_id':'leo#{}#{}#{}'.format(dataset_name, scene_name, ci)
                                             })
+                
         self.all_scene_caption.extend(extend_leo_scene_caption)
-        if config.subset == 'train':
-            self.all_scene_caption = self.all_scene_caption * 2
+        # if config.subset == 'train':
+        #     self.all_scene_caption = self.all_scene_caption * 2
         
         # Load some grouding scene caption data ~107k from GroundLLM https://arxiv.org/pdf/2405.10370
         # grounding_scene_caption_anno = json.load(open('data/SceneVerse/ScanNet/annotations/scene_caption/groundedscenecaption_format.json', 'r'))
@@ -809,20 +826,20 @@ class SceneVerseLLMPretrainDataset(Dataset):
 
         # random.seed(0)
         # self.all_relation_caption.extend(instance_filter_relation_caption)
-        # random.shuffle(self.all_scene_caption)
-        # random.shuffle(self.all_relation_caption)
-        # random.shuffle(self.all_object_caption)
-        # dist.broadcast_object_list(self.all_scene_caption, src=0)
-        # dist.broadcast_object_list(self.all_relation_caption, src=0)
-        # dist.broadcast_object_list(self.all_object_caption, src=0)
+        random.shuffle(self.all_scene_caption)
+        random.shuffle(self.all_relation_caption)
+        random.shuffle(self.all_object_caption)
+        dist.broadcast_object_list(self.all_scene_caption, src=0)
+        dist.broadcast_object_list(self.all_relation_caption, src=0)
+        dist.broadcast_object_list(self.all_object_caption, src=0)
         
         if config.subset == 'train':
-            # self.all_scene_caption = self.all_scene_caption[:-2000]
-            # self.all_relation_caption = self.all_relation_caption[:-2000]
-            # self.all_object_caption = self.all_object_caption[:-2000]
-            self.all_scene_caption = self.all_scene_caption[:100000]
-            self.all_relation_caption = self.all_relation_caption[:100000]
-            self.all_object_caption = self.all_object_caption[:100000]
+            self.all_scene_caption = self.all_scene_caption[:-2000]
+            self.all_relation_caption = self.all_relation_caption[:-2000]
+            self.all_object_caption = self.all_object_caption[:-2000]
+            # self.all_scene_caption = self.all_scene_caption[:100000]
+            # self.all_relation_caption = self.all_relation_caption[:100000]
+            # self.all_object_caption = self.all_object_caption[:100000]
         else:
             # self.all_scene_caption = self.all_scene_caption[-2000:]
             # self.all_relation_caption = self.all_relation_caption[-2000:]
@@ -842,16 +859,16 @@ class SceneVerseLLMPretrainDataset(Dataset):
         print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data and objaverse', logger = 'SceneVerse')
         
         # Add Unique ID for each episode
-        episode_id = 0
-        for data in self.all_scene_caption:
-            data['episode_id'] = episode_id
-            episode_id += 1
-        for data in self.all_relation_caption:
-            data['episode_id'] = episode_id
-            episode_id += 1
-        for data in self.all_object_caption:
-            data['episode_id'] = episode_id
-            episode_id += 1
+        # episode_id = 0
+        # for data in self.all_scene_caption:
+        #     data['episode_id'] = episode_id
+        #     episode_id += 1
+        # for data in self.all_relation_caption:
+        #     data['episode_id'] = episode_id
+        #     episode_id += 1
+        # for data in self.all_object_caption:
+        #     data['episode_id'] = episode_id
+        #     episode_id += 1
         
         # Prepare corpus for evaluation
         self.corpus = {
@@ -1209,7 +1226,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                                 answers = answers[:pos + len(text)] + ' ' + bbox + ' ' + answers[pos + len(text):]
                 intruction = random.choice(TASK_PROMPT[f'{task_name}_with_bbox'])
             else:
-                intruction = random.choice(TASK_PROMPT[task_name])
+                intruction = random.choice(TASK_PROMPT[task_name]).format(object_name=anno['instance_type'])
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             llm_inputs = self.tokenizer.batch_encode_plus(
@@ -1305,7 +1322,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             if not scan_name == 'HM3D':
                 intruction = random.choice(TASK_PROMPT[task_name]) 
             else:
-                intruction = '### human: what object is the poinclouds? ### assistant:'
+                intruction = '### human: what is this poinclouds? ### assistant:'
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']
@@ -1394,9 +1411,14 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         # Load part 1 task: QA
         self.all_scene_qa = []
         self.scanqa_anno = json.load(open(f'data/SceneVerse/ScanNet/annotations/qa/ScanQA_v1.0_{config.subset}.json'))
-        for scene_cap in self.scanqa_anno:
+        for si,scene_cap in enumerate(self.scanqa_anno):
             scan_name = scene_cap['scene_id']
-            self.all_scene_qa.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":scene_cap, "task_name": "scene_qa"})
+            self.all_scene_qa.append({'dataset_name':'ScanNet', 
+                                      "scan_name":scan_name, 
+                                      "anno":scene_cap, 
+                                      "task_name": "scene_qa",
+                                      'episode_id':'{}#{}#{}'.format(dataset_name, scan_name, si)
+                                      })
         
         ## Only in train
         # if config.subset == 'train':
@@ -1428,11 +1450,21 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                         for ans in oc['answers']:
                             scan_name = oc['scene_id']
                             anno = {'scene_id':oc['scene_id'], 'target_id':oc['object_id'], 'answers':[ans], 'object_name':oc['object_name']}
-                            self.all_object_caption.append({'dataset_name':dn, "scan_name":scan_name, "anno":anno, "task_name": "object_caption"})
+                            self.all_object_caption.append({'dataset_name':dn, 
+                                                            "scan_name":scan_name, 
+                                                            "anno":anno, 
+                                                            "task_name": "object_caption",
+                                                            'episode_id':'{}#{}#{}#{}'.format(dataset_name, scan_name, oc['object_id'], ans)
+                                                            })
                     ## In eval we hava multiple answers
                     else:
                         scan_name = oc['scene_id']
-                        self.all_object_caption.append({'dataset_name':dn, "scan_name":scan_name, "anno":oc, "task_name": "object_caption"})
+                        self.all_object_caption.append({'dataset_name':dn, 
+                                                        "scan_name":scan_name, 
+                                                        "anno":oc, 
+                                                        "task_name": "object_caption",
+                                                        'episode_id':'{}#{}#{}'.format(dataset_name, scan_name, oc['object_id'])
+                                                        })
             ## As HM3D only contains annotations from template like 'the pointcloud of xxx'
             # elif config.subset == 'train' and not dn == 'HM3D':
             #     tmp_object_caption = json.load(open(f'data/SceneVerse/{dn}/annotations/{object_caption_anno_name}'))
@@ -1444,12 +1476,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         # if config.subset == 'train':  
         self.all_object_grouding = copy.deepcopy(self.all_object_caption)
         for og in self.all_object_grouding:
-            # if np.random.random() > 0.5:
-            #     og['task_name'] = 'object_grouding'  # Given object caption and scene pointclouds output the object bbox
-            # else:
-            og['task_name'] = 'object_caption_given_bbox'  # Given object bbox and scene pointclouds output the object caption
-        if config.subset == 'val':
-            self.all_object_grouding[-5000:]
+            if np.random.random() > 0.5 and config.subset == 'train':
+                og['task_name'] = 'object_grouding'  # Given object caption and scene pointclouds output the object bbox
+            else:
+                og['task_name'] = 'object_caption_given_bbox'  # Given object bbox and scene pointclouds output the object caption
+
         
         # Load part 3 task: scene understanding from all scans of sceneverse
         ## All in scene_id question answer format
@@ -1459,19 +1490,39 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             embodied_dialogue_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_dialogue_filtered_{config.subset}.json'))
             for ed in embodied_dialogue_anno:
                 scan_name = ed['scene_id']
-                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ed, "task_name": "scene_understanding"})
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', 
+                                                    "scan_name":scan_name, 
+                                                    "anno":ed, 
+                                                    "task_name": "scene_understanding",
+                                                    'unique_id': 'none'
+                                                    })
             embodied_planning_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_planning_filtered_{config.subset}.json'))
             for ep in embodied_planning_anno:
                 scan_name = ep['scene_id']
-                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":ep, "task_name": "scene_understanding"})
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', 
+                                                    "scan_name":scan_name, 
+                                                    "anno":ep, 
+                                                    "task_name": "scene_understanding",
+                                                    'unique_id': 'none'
+                                                    })
             embodied_question_answer_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_question_answer_{config.subset}.json'))
             for eqa in embodied_question_answer_anno:
                 scan_name = eqa['scene_id']
-                self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":eqa, "task_name": "scene_understanding"})
+                self.all_scene_understanding.append({'dataset_name':'ScanNet', 
+                                                    "scan_name":scan_name,
+                                                    "anno":eqa, 
+                                                    "task_name": "scene_understanding",
+                                                    'unique_id': 'none'
+                                                    })
         scene_caption_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_scene_description_{config.subset}.json'))
         for sc in scene_caption_anno:
             scan_name = sc['scene_id']
-            self.all_scene_understanding.append({'dataset_name':'ScanNet', "scan_name":scan_name, "anno":sc, "task_name": "scene_understanding"})
+            self.all_scene_understanding.append({'dataset_name':'ScanNet', 
+                                                "scan_name":scan_name, 
+                                                "anno":sc, 
+                                                "task_name": "scene_understanding",
+                                                'episode_id':'{}#{}'.format(dataset_name, scan_name)
+                                                })
         # self.all_scene_understanding = self.all_scene_understanding * 30
 
         print_log(f'[DATASET] {len(self.all_scene_qa)} scene qa were loaded from scan data', logger = 'SceneVerse')
@@ -1494,19 +1545,19 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             self.all_object_grouding = []
         
         # Add Unique ID for each episode
-        episode_id = 0
-        for data in self.all_scene_qa:
-            data['episode_id'] = episode_id
-            episode_id += 1
-        for data in self.all_scene_understanding:
-            data['episode_id'] = episode_id
-            episode_id += 1
-        # for data in self.all_object_caption:
+        # episode_id = 0
+        # for data in self.all_scene_qa:
         #     data['episode_id'] = episode_id
         #     episode_id += 1
-        for data in self.all_object_grouding:
-            data['episode_id'] = episode_id
-            episode_id += 1
+        # for data in self.all_scene_understanding:
+        #     data['episode_id'] = episode_id
+        #     episode_id += 1
+        # # for data in self.all_object_caption:
+        # #     data['episode_id'] = episode_id
+        # #     episode_id += 1
+        # for data in self.all_object_grouding:
+        #     data['episode_id'] = episode_id
+        #     episode_id += 1
         
         # Prepare corpus for evaluation
         self.corpus = {

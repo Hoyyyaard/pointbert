@@ -52,6 +52,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene.yaml \
-    --exp_name 0530_Pretrain_EqualData_Batch_From[0530_Pretrain_EqualData_Batch_From[Openscene]] \
-    --ckpt experiments/Adaptive-LLM-Openscene/MultiScale_models/0530_Pretrain_EqualData_Batch_From[Openscene]/ckpt-last.pth
+    --exp_name 0601_Pretrain_EqualData_Batch_AddPos_From[0601_Pretrain_EqualData_Batch_TokenMask_AddPos_From[Openscene]] \
+    --ckpt experiments/Adaptive-LLM-Openscene/MultiScale_models/0601_Pretrain_EqualData_Batch_TokenMask_AddPos_From[Openscene]/ckpt-last.pth \
     # --resume

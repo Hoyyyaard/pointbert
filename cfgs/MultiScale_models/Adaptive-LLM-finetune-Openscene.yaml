@@ -1,7 +1,7 @@
 optimizer : {
   type: Adam,
   kwargs: {
-  lr : 0.000005, 
+  lr : 0.00001, 
   weight_decay : 0.05,
 
 }}
@@ -22,7 +22,7 @@ model : {
   NAME: Openscene, 
 
   DTYPE: FP32,
-
+  distributed: FSDP,  # DDP, FSDP
   quantization: False, 
 
   trans_dim: 768,

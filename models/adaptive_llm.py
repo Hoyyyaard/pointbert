@@ -148,16 +148,14 @@ class AdaptiveLLM(nn.Module):
         self.xyz_projection = nn.Sequential(
             nn.Linear(3 , 128),
             nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
+            nn.Linear(128, self._encoder_config.trans_dim),
         )
         self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.trans_dim + 128 , self._llm_config.hidden_size),
+            nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
-            nn.ReLU(),
         )
         # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
         # self.xyz_projection = self.xyz_projection.to(self.dtype)
@@ -232,6 +230,10 @@ class AdaptiveLLM(nn.Module):
     def load_model_from_ckpt(self, bert_ckpt_path, args, finetune=False):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
         ckpt = torch.load(bert_ckpt_path, map_location=map_location)
+        
+        # tmp_ckpt = {k:v for k,v in ckpt['base_model'].items() if not k.find('llm.') != -1}
+        # ckpt = {'base_model': tmp_ckpt}
+        
         if not finetune:
             base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
             for k in list(base_ckpt.keys()):
@@ -245,8 +247,10 @@ class AdaptiveLLM(nn.Module):
             
         # uclip2
         # base_ckpt = {k.replace("module.point_encoder.", "encoder."): v for k, v in ckpt['state_dict'].items() if k.find('point_encoder') != -1}
-            
+       
         incompatible = self.load_state_dict(base_ckpt, strict=False)
+        print_log(incompatible, logger = 'Transformer')
+        
 
         if incompatible.missing_keys and torch.cuda.current_device() == 0:
             print_log('missing_keys', logger = 'Transformer')
@@ -314,7 +318,9 @@ class AdaptiveLLM(nn.Module):
         center.requires_grad_(True)
         # center = center.to(self.dtype)
         # vision_embed = vision_embed.to(self.dtype)
-        vision_embed = torch.cat([vision_embed, self.xyz_projection(center)], dim=-1)
+        # vision_embed = torch.cat([vision_embed, self.xyz_projection(center)], dim=-1)
+        vision_embed = vision_embed + self.xyz_projection(center)
+        # vision_embed = vision_embed * vision_mask.unsqueeze(-1)
         vision_embed = self.encoder_to_llm_projection(vision_embed)
         assert not torch.isnan(vision_embed).any()
         assert not torch.isinf(vision_embed).any()
@@ -335,9 +341,9 @@ class AdaptiveLLM(nn.Module):
             # )
             outputs = self.llm(
                 vision_embeds=vision_embed,
-                vision_mask=vision_mask.to(self.dtype),
+                vision_mask=vision_mask,
                 input_ids=input_ids,
-                attention_mask=input_mask.to(self.dtype),
+                attention_mask=input_mask,
                 output_attentions=True,
             )
             
@@ -345,7 +351,7 @@ class AdaptiveLLM(nn.Module):
             loss = self._loss_caption(
                 logits = outputs.logits[:, vision_embed.shape[1] - 1: -1],
                 target = input_ids,
-                mask = gradient_mask.to(self.dtype),
+                mask = gradient_mask,
             )
             assert not torch.isnan(outputs.logits).any()
             assert not torch.isnan(loss).any()
@@ -384,10 +390,10 @@ class AdaptiveLLM(nn.Module):
                 # vision_embed_per_batch = vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype)
                 output = generation(
                     self.llm, 
-                    vision_embeds=vision_embed[batch_id].unsqueeze(0).to(self.dtype),
-                    vision_mask=vision_mask[batch_id].unsqueeze(0).to(self.dtype),
+                    vision_embeds=vision_embed[batch_id].unsqueeze(0),
+                    vision_mask=vision_mask[batch_id].unsqueeze(0),
                     input_ids=sample_instruction[sample_mask == 1].unsqueeze(0),
-                    attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0), dtype=self.dtype),
+                    attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0)),
                     max_length=128,   
                     **caption_config,
                 )

@@ -134,7 +134,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         
         # print(torch.cuda.memory_summary())
         
-        scaler = amp.GradScaler()
+        # scaler = amp.GradScaler()
         
         # optimizer & scheduler
         optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
@@ -151,7 +151,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
         base_model.zero_grad()
         
-        for epoch in range(start_epoch, config.max_epoch + 1):
+        for epoch in range(start_epoch, config.max_epoch + 1): 
+        
             epoch_tqdm.update(1)
             if args.distributed:
                 train_sampler.set_epoch(epoch)
@@ -171,7 +172,6 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             n_batches = len(train_dataloader)
             pbar = tqdm(total = n_batches)
             for idx, data_dict in enumerate(train_dataloader):
-                
                 pbar.update(1)
             
                 curr_time = time.time()
@@ -186,10 +186,10 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
 
                 data_time.update(time.time() - batch_start_time)
 
-                with amp.autocast():
-                    loss = base_model(data_dict)
-                    dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-                    loss = loss / dist.get_world_size() 
+                # with amp.autocast():
+                loss = base_model(data_dict)
+                dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                loss = loss / dist.get_world_size() 
                 
                 if not math.isfinite(loss.item()):
                     if curr_nan_times < max_tolerant_nan:
@@ -200,8 +200,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                         print_log("Loss in not finite. Terminate training.", logger = logger)
                         exit(-1)
                 
-                scaler.scale(loss).backward()
-                # loss.backward()
+                # scaler.scale(loss).backward()
+                loss.backward()
                 curr_nan_times = 0
             
                 torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=1)
@@ -209,8 +209,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 # forward
                 if num_iter == config.step_per_update:
                     num_iter = 0
-                    scaler.step(optimizer)
-                    # optimizer.step()
+                    # scaler.step(optimizer)
+                    optimizer.step()
                     base_model.zero_grad()
                     
                 # for n,p in base_model.module.named_parameters():
@@ -267,9 +267,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
             if (config.max_epoch - epoch) < 10:
                 builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
-            # if epoch % args.val_freq == 0 :
-            #     # Validate the current model
-            #     metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
+            if epoch % args.val_freq == 0 :
+                # Validate the current model
+                metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
 
             #     # Save ckeckpoints
             #     if metrics.better_than(best_metrics):

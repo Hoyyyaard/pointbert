@@ -191,21 +191,32 @@ def save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, prefix,
 
 def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None, finetune=False):
     
-    weight_ckpt = base_model.state_dict()
-
+    llm = base_model.llm
+    full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(llm, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+        llm_weight_ckpt = llm.state_dict()
+        print_log(llm_weight_ckpt , logger = logger)
+    
+    all_weight_ckpt = base_model.state_dict()
+    
     if args.local_rank == 0:
-        parameter_names = list(weight_ckpt.keys())
-        if not finetune:
-            for name in parameter_names:
-                if name.find('llm.') != -1:
-                    weight_ckpt.pop(name)
+        
+        parameter_names = list(all_weight_ckpt.keys())
+        for name in parameter_names:
+            if name.find('llm.') != -1:
+                all_weight_ckpt.pop(name)
+        # torch.save(all_weight_ckpt,os.path.join(args.experiment_path, 'projector_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
+        # torch.save(llm_weight_ckpt,os.path.join(args.experiment_path, 'llm_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
+        if finetune:
+            for k,v in llm_weight_ckpt.items():
+                all_weight_ckpt['llm.{}'.format(k)] = v
         torch.save({
-                    'base_model' : weight_ckpt,
+                    'base_model' : all_weight_ckpt,
                     'optimizer' : optimizer.state_dict(),
                     'epoch' : epoch,
                     'metrics' : metrics.state_dict() if metrics is not None else dict(),
                     'best_metrics' : best_metrics.state_dict() if best_metrics is not None else dict(),
-                    }, os.path.join(args.experiment_path, prefix + '.pth'))
+                    }, os.path.join(args.experiment_path, prefix + '.pth'), _use_new_zipfile_serialization=False)
         print_log(f"Save checkpoint at {os.path.join(args.experiment_path, prefix + '.pth')}", logger = logger)
 
 def load_model(base_model, ckpt_path, logger = None):
