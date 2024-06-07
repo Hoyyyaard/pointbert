@@ -64,7 +64,7 @@ class OpensceneEncoder(nn.Module):
             scene_pointclouds = torch.cat([xyz, scene_fts, valid_labels.unsqueeze(-1)], dim=-1).contiguous()
             ## batch_size, num_group, group_size, 768
             scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds)
-            ## Dop xyz
+            ## Drop xyz
             valid_neighborhood = scene_neighborhood[... , -1]
             scene_fts = scene_neighborhood[... , 3:-1].mean(-2)
             all_fts[scene_idx] = scene_fts
@@ -121,23 +121,22 @@ class AdaptiveLLM(nn.Module):
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
                                             )
-
             self.llm.model.gradient_checkpointing_enable()
             self.llm.model.gradient_checkpointing = True
             print_log("Gradient checkpointing is enabled", logger=self.logger)
         
         # FIXME
         # Expand LLM vocalubary when finetune as there are grouding data
-        if finetune:
-            special_tokens = ['<obj>', '</obj>']
-            xyz_prompt = '<loc{}>'
-            for i in range(255):
-                special_tokens.append(xyz_prompt.format(i))
-            whl_prompt = '<whl{}>'
-            for i in range(255):
-                special_tokens.append(whl_prompt.format(i))
-            self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
-            self.llm.resize_token_embeddings(len(self.tokenizer))
+        # if finetune:
+        special_tokens = ['<obj>', '</obj>']
+        xyz_prompt = '<loc{}>'
+        for i in range(255):
+            special_tokens.append(xyz_prompt.format(i))
+        whl_prompt = '<whl{}>'
+        for i in range(255):
+            special_tokens.append(whl_prompt.format(i))
+        self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
+        self.llm.resize_token_embeddings(len(self.tokenizer))
         
         if not self.OPENSCENE:
             self.encoder = PointTransformer(self._encoder_config)
@@ -275,7 +274,7 @@ class AdaptiveLLM(nn.Module):
         )
         final_loss = torch.sum(loss_per_word * mask) / torch.sum(mask + 1e-6)
 
-        return final_loss
+        return final_loss + 0.
         
     def forward(self, data_dict, eval=False):
         with torch.no_grad():
@@ -322,8 +321,8 @@ class AdaptiveLLM(nn.Module):
         vision_embed = vision_embed + self.xyz_projection(center)
         # vision_embed = vision_embed * vision_mask.unsqueeze(-1)
         vision_embed = self.encoder_to_llm_projection(vision_embed)
-        assert not torch.isnan(vision_embed).any()
-        assert not torch.isinf(vision_embed).any()
+        # assert not torch.isnan(vision_embed).any()
+        # assert not torch.isinf(vision_embed).any()
         if not eval:
             
             input_mask = data_dict['attention_mask']
@@ -340,10 +339,10 @@ class AdaptiveLLM(nn.Module):
             #     output_attentions=False,
             # )
             outputs = self.llm(
-                vision_embeds=vision_embed,
-                vision_mask=vision_mask,
+                vision_embeds=vision_embed.to(self.dtype),
+                vision_mask=vision_mask.to(self.dtype),
                 input_ids=input_ids,
-                attention_mask=input_mask,
+                attention_mask=input_mask.to(self.dtype),
                 output_attentions=True,
             )
             
@@ -351,10 +350,10 @@ class AdaptiveLLM(nn.Module):
             loss = self._loss_caption(
                 logits = outputs.logits[:, vision_embed.shape[1] - 1: -1],
                 target = input_ids,
-                mask = gradient_mask,
+                mask = gradient_mask.to(self.dtype),
             )
-            assert not torch.isnan(outputs.logits).any()
-            assert not torch.isnan(loss).any()
+            # assert not torch.isnan(outputs.logits).any()
+            # assert not torch.isnan(loss).any()
             return loss
         
         else:

@@ -47,11 +47,15 @@ else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
 
+source /gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/etc/profile.d/conda.sh
+conda activate ll3da
+wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene.yaml \
-    --exp_name 0601_Pretrain_EqualData_Batch_AddPos_From[0601_Pretrain_EqualData_Batch_TokenMask_AddPos_From[Openscene]] \
-    --ckpt experiments/Adaptive-LLM-Openscene/MultiScale_models/0601_Pretrain_EqualData_Batch_TokenMask_AddPos_From[Openscene]/ckpt-last.pth \
+    --exp_name Exp0002_0607_LL3daData_AddPos_DetPrompt_FP32_From[Scratch] \
+    --resume
+    # --ckpt experiments/Adaptive-LLM-Openscene/MultiScale_models/0605_Pretrain_Batch_TokenMask_AddPos_DetPrompt_Equal61kData_From[Openscene]/ckpt-last.pth \
     # --resume

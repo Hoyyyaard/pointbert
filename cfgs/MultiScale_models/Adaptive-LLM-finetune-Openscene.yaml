@@ -2,7 +2,7 @@ optimizer : {
   type: Adam,
   kwargs: {
   lr : 0.00001, 
-  weight_decay : 0.05,
+  weight_decay : 0,
 
 }}
 
@@ -44,7 +44,7 @@ model : {
 }
 
 finetune : True
-total_bs : 60
+total_bs : 120
 step_per_update : 1
 max_epoch : 5
 

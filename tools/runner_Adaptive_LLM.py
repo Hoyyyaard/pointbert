@@ -26,6 +26,7 @@ from datasets import data_transforms
 from pointnet2_ops import pointnet2_utils
 from tools.dist import all_gather_dict, barrier, is_primary
 import torch.cuda.amp as amp
+import wandb
 
 train_transforms = transforms.Compose(
     [
@@ -58,8 +59,24 @@ def evaluate_svm(train_features, train_labels, test_features, test_labels):
     pred = clf.predict(test_features)
     return np.sum(test_labels == pred) * 1. / pred.shape[0]
 
+# def safe_all_reduce(loss):
+#     # Check if the current loss is NaN and create a mask
+#     mask = (~torch.isnan(loss)).float()  # 1 if loss is not NaN, 0 if loss is NaN
+#     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+
+#     # Perform all_reduce on loss and mask
+#     dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+#     dist.all_reduce(mask, op=dist.ReduceOp.SUM)
+
+#     # Compute the average loss considering only valid (non-NaN) values
+#     avg_loss = loss / (mask + 1e-6)  # Add a small value to avoid division by zero
+
+#     return avg_loss
 
 def run_net(args, config, train_writer=None, val_writer=None, test=False):
+    if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
+        wandb.init(project='3DLLM', name=args.exp_name.split('_')[0])
+    
     logger = get_logger(args.log_name)
     
     finetune = config.get('finetune', False)
@@ -111,6 +128,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
     # print(torch.cuda.memory_summary())
 
     
+    
     # DDP
     if args.distributed:
         # Sync BN
@@ -151,7 +169,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
         base_model.zero_grad()
         
-        for epoch in range(start_epoch, config.max_epoch + 1): 
+        for epoch in range(start_epoch, config.max_epoch): 
         
             epoch_tqdm.update(1)
             if args.distributed:
@@ -172,11 +190,11 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             n_batches = len(train_dataloader)
             pbar = tqdm(total = n_batches)
             for idx, data_dict in enumerate(train_dataloader):
-                pbar.update(1)
-            
+                pbar.update(1)          
                 curr_time = time.time()
                 num_iter += 1
                 n_itr = epoch * n_batches + idx
+                
                 
                 for k,v in data_dict.items():
                     if isinstance(v, torch.Tensor):
@@ -187,10 +205,14 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 data_time.update(time.time() - batch_start_time)
 
                 # with amp.autocast():
-                loss = base_model(data_dict)
+                loss = torch.zeros(1)[0].cuda()
+                loss += base_model(data_dict)
+                
+                # loss = safe_all_reduce(loss)
+                # if torch.cuda.current_device() == 0:
+                #     print("1", loss)
                 dist.all_reduce(loss, op=dist.ReduceOp.SUM)
                 loss = loss / dist.get_world_size() 
-                
                 if not math.isfinite(loss.item()):
                     if curr_nan_times < max_tolerant_nan:
                         print_log("Loss in not finite. Skip this training step.", logger = logger)
@@ -240,6 +262,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 if train_writer is not None:
                     train_writer.add_scalar('Loss/Batch/Loss', loss.item(), n_itr)
                     train_writer.add_scalar('Loss/Batch/LR', optimizer.param_groups[0]['lr'], n_itr)
+                    
+                if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
+                    wandb.log({"step": n_itr, "loss": loss.item(), "lr": optimizer.param_groups[0]['lr']})
 
                 batch_time.update(time.time() - batch_start_time)
                 batch_start_time = time.time()
@@ -254,6 +279,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                     eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
                     print_log(f'ETA: {eta_str}', logger = logger)
                 
+                # if idx % 2500 == 0 and idx > 0:
+                #     builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-step-{}'.format(idx), args, logger = logger, finetune=finetune)
+                
             epoch_end_time = time.time()
 
             if train_writer is not None:
@@ -262,14 +290,11 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             print_log('[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s' %
                 (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)
 
-            # Debug
-            barrier()
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
-            if (config.max_epoch - epoch) < 10:
-                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
-            if epoch % args.val_freq == 0 :
-                # Validate the current model
-                metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
+            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
+            # if epoch % args.val_freq == 0 :
+            #     # Validate the current model
+            #     metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
 
             #     # Save ckeckpoints
             #     if metrics.better_than(best_metrics):
@@ -374,6 +399,7 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False
             )
+            print(answers)
             # else:
             #     answers = base_model.tokenizer.batch_decode(
             #         output_ids,
@@ -382,7 +408,7 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             #     )
             
             for idx in range(output_ids.shape[0]):
-                key = gather_data_dict['episode_id'][idx].item()
+                key = gather_data_dict['episode_id'][idx]
                 task_name = gather_data_dict['task_name'][idx]
                 answer = answers[idx]
                 answer = ' '.join(filter(lambda w: w, answer.split(' ')))

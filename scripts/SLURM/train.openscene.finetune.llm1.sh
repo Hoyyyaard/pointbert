@@ -3,7 +3,7 @@
 set -x
 
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -42,7 +42,7 @@ echo "MASTER_PORT: $MASTER_PORT"
 
 if [ $FLAG -eq 1 ]; then
     NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK --max_restarts 5"
 else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
@@ -54,7 +54,7 @@ wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
-    --config cfgs/MultiScale_models/Adaptive-LLM-Openscene.yaml \
-    --exp_name 0606_Pretrain_Batch_GivenXYZ_AddPos_DetPrompt_Equal61kOSData_From[Openscene] \
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene.yaml \
+    --exp_name Exp0001_0607_LL3daData_AddPos_DetPrompt_FP32_From[0606_Pretrain_Batch_GivenXYZ_AddPos_DetPrompt_Equal61kOSData_From[Openscene]] \
+    --ckpt experiments/Adaptive-LLM-Openscene/MultiScale_models/0606_Pretrain_Batch_GivenXYZ_AddPos_DetPrompt_Equal61kOSData_From[Openscene]/ckpt-last.pth \
     --resume
-

@@ -77,7 +77,6 @@ def build_opti_sche(base_model, config):
         scheduler = CosineLRScheduler(optimizer,
                 t_initial=sche_config.kwargs.epochs,
                 lr_min=1e-6,
-                decay_rate=0.1,
                 warmup_lr_init=1e-6,
                 warmup_t=sche_config.kwargs.initial_epochs,
                 cycle_limit=1,
@@ -190,26 +189,40 @@ def save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, prefix,
         print_log(f"Save checkpoint at {os.path.join(args.experiment_path, prefix + '.pth')}", logger = logger)
 
 def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, prefix, args, logger = None, finetune=False):
+    # FIXME
+    finetune = True
+    if finetune:
+        torch.distributed.barrier()
+        llm = base_model.llm
+        full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        with FSDP.state_dict_type(llm, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+            llm_weight_ckpt = llm.state_dict()
+        # torch.save(all_weight_ckpt, os.path.join(args.experiment_path, 'llm_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
+            # print_log(llm_weight_ckpt , logger = logger)
+    else:
+        full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        with FSDP.state_dict_type(base_model, StateDictType.FULL_STATE_DICT, full_state_dict_config):
+            all_weight_ckpt = base_model.state_dict()
     
-    llm = base_model.llm
-    full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    with FSDP.state_dict_type(llm, StateDictType.FULL_STATE_DICT, full_state_dict_config):
-        llm_weight_ckpt = llm.state_dict()
-        print_log(llm_weight_ckpt , logger = logger)
+    # torch.save(all_weight_ckpt,os.path.join(args.experiment_path, 'all_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
     
-    all_weight_ckpt = base_model.state_dict()
-    
-    if args.local_rank == 0:
-        
-        parameter_names = list(all_weight_ckpt.keys())
-        for name in parameter_names:
-            if name.find('llm.') != -1:
-                all_weight_ckpt.pop(name)
-        # torch.save(all_weight_ckpt,os.path.join(args.experiment_path, 'projector_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
-        # torch.save(llm_weight_ckpt,os.path.join(args.experiment_path, 'llm_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
-        if finetune:
-            for k,v in llm_weight_ckpt.items():
-                all_weight_ckpt['llm.{}'.format(k)] = v
+    if args.local_rank == 0 and int(os.environ["RANK"]) == 0:
+        if not finetune:
+            parameter_names = list(all_weight_ckpt.keys())
+            for name in parameter_names:
+                if name.find('llm.') != -1:
+                    all_weight_ckpt.pop(name)
+        else:
+            all_weight_ckpt = {'llm.{}'.format(k):v for k,v in llm_weight_ckpt.items()}
+            for k,v in base_model.encoder_to_llm_projection.state_dict().items():
+                all_weight_ckpt['encoder_to_llm_projection.{}'.format(k)] = v
+            for k,v in base_model.xyz_projection.state_dict().items():
+                all_weight_ckpt['xyz_projection.{}'.format(k)] = v
+            # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
+            # self.xyz_projection = self.xyz_projection.to(self.dtype)
+            # for k,v in llm_weight_ckpt.items():
+            #     all_weight_ckpt['llm.{}'.format(k)] = v
+            # torch.save(llm_weight_ckpt,os.path.join(args.experiment_path, 'llm_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
         torch.save({
                     'base_model' : all_weight_ckpt,
                     'optimizer' : optimizer.state_dict(),
