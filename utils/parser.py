@@ -69,6 +69,12 @@ def get_args():
     parser.add_argument(
         '--fold', type=int, default=-1)
     
+    parser.add_argument(
+        '--visualization_attn',         
+        action='store_true', 
+        default=False, 
+        help='whether to visualize llm attentions')
+    
     args = parser.parse_args()
 
     if args.test and args.resume:

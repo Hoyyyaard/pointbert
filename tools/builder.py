@@ -101,13 +101,12 @@ def build_llm_opti_sche(base_model, config, train_loader, finetune=False):
     opti_params = filter(lambda p: p.requires_grad, base_model.parameters())
     
     opti_config = config.optimizer
-    eps = 1e-4 
     if opti_config.type == 'AdamW':
-        optimizer = optim.AdamW(opti_params, eps=eps, **opti_config.kwargs)
+        optimizer = optim.AdamW(opti_params, **opti_config.kwargs)
     elif opti_config.type == 'Adam':
-        optimizer = optim.Adam(opti_params, eps=eps, **opti_config.kwargs)
+        optimizer = optim.Adam(opti_params, **opti_config.kwargs)
     elif opti_config.type == 'SGD':
-        optimizer = optim.SGD(opti_params, nesterov=True, eps=eps,  **opti_config.kwargs)
+        optimizer = optim.SGD(opti_params, nesterov=True,  **opti_config.kwargs)
     else:
         raise NotImplementedError()
 

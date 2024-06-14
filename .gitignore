@@ -7,6 +7,8 @@ models/openscene/ckpts
 models/openscene/data
 models/openscene/tmp
 
+vis*
+
 # C extensions
 *.so
 

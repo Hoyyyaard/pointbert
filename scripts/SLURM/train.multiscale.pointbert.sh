@@ -54,5 +54,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm --sync_bn \
     --config cfgs/MultiScale_models/Point-BERT.yaml \
     --exp_name 0526_Multiscale_Pointbert_Pretrain_300Epoch \
-    --val_freq 300   
+    --val_freq 300  --resume  
 

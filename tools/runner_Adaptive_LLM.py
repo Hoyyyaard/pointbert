@@ -74,8 +74,6 @@ def evaluate_svm(train_features, train_labels, test_features, test_labels):
 #     return avg_loss
 
 def run_net(args, config, train_writer=None, val_writer=None, test=False):
-    if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
-        wandb.init(project='3DLLM', name=args.exp_name.split('_')[0])
     
     logger = get_logger(args.log_name)
     
@@ -96,11 +94,13 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             p.requires_grad = False
         for n, p in base_model.encoder.named_parameters():
             p.requires_grad = False
+
     else:
         for n, p in base_model.llm.named_parameters():
             p.requires_grad = True
         for n, p in base_model.encoder.named_parameters():
             p.requires_grad = False
+        
     
     # if args.use_gpu:
     #     base_model.to(args.local_rank)
@@ -116,19 +116,33 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
     #     print_log('Using FSDP to fully finetune LLM')
     #     base_model.wrap_lora()
     
+    if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
+        if os.path.exists(os.path.join(args.experiment_path, 'wandb_id.json')):
+            with open(os.path.join(args.experiment_path, 'wandb_id.json'), "r") as f:
+                id = json.load(f)['id']
+                wandb.init(project='3DLLM', id=id, resume="must")
+            print('Resume wandb experiment')
+        else:
+            run = wandb.init(project='3DLLM', name=args.exp_name.split('_')[0])
+            id = run.id
+            # Save id to resume
+            with open(os.path.join(args.experiment_path, 'wandb_id.json'), "w") as f:
+                json.dump({'id':id}, f) 
+            print('Start new wandb experiment')
+
     # resume ckpts
     if args.resume:
+        
         start_epoch, best_metric = builder.resume_model(base_model, args, logger = logger)
         best_metrics = Acc_Metric(best_metric)
     else:
+        
         if args.ckpts is not None:
             base_model.load_model_from_ckpt(args.ckpts, args, finetune=(finetune | test))
         else:
             print_log('Training from scratch', logger = logger)
     # print(torch.cuda.memory_summary())
 
-    
-    
     # DDP
     if args.distributed:
         # Sync BN
@@ -361,6 +375,129 @@ def score_captions(corpus: dict, candidates: dict):
     }
     return score_per_caption, message, eval_metric
 
+def pc_norm(pc):
+    """ pc: NxC, return NxC """
+    centroid = np.mean(pc, axis=0)
+    pc = pc - centroid
+    m = np.max(np.sqrt(np.sum(pc**2, axis=1)))
+    pc = pc / m
+    return pc
+
+def convert_pcd_to_image(pointcloud, color):
+    from mpl_toolkits.mplot3d import Axes3D
+    
+    fig = plt.figure(figsize=(8, 8))
+    # fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+    ax = fig.gca(projection=Axes3D.name, adjustable='box')
+    ax.axis('off')
+    
+    # Filter the 5% highest points
+    z_max = np.percentile(pointcloud[:, 2], 90)
+    mask = pointcloud[:, 2] <= z_max
+    pointcloud = pointcloud[mask]
+    # pointcloud = pc_norm(pointcloud)
+    color = color[mask]
+    
+    ax.scatter3D(pointcloud[:, 0], pointcloud[:, 1], pointcloud[:, 2], zdir='z', c=color)
+    ax.view_init(elev=90, azim=0)
+    ax.dist = 5.8
+    # max, min = np.max(ptcloud), np.min(ptcloud)
+    # ax.set_xbound(min, max)
+    # ax.set_ybound(min, max)
+    # ax.set_zbound(min, max)
+    # ax.subpl
+    # fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+    fig.canvas.draw()
+    img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3, ))
+    
+    return img
+
+def visualization_attn(base_model, data_dict, attentions, output_ids, center, answers):
+    '''
+        attentions : [bs, 32, 32, seq len, seq len]
+    '''
+    # Import
+    from models.dvae import knn_point
+    map_colors = ["blue", "yellow", "red"]  
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list("mycmap", map_colors)
+    # Constants
+    group_size = 384
+    
+    # replace space with _
+    unique_id = data_dict['episode_id'][0].replace(' ', '_').replace('#','_').replace('?','_')
+    answer = answers[0].replace(' ', '_')
+    
+    output_len = (output_ids[0] != 2).sum().item()
+    input_len = 128 + (data_dict['instruction_mask'][0] == 1).sum().item()
+    valid_len = input_len + output_len
+    attentions = attentions[0, : ,: ,:valid_len, :valid_len] # [32, 32, valid_len, valid_len]
+    # Viualize the attention map
+    plt.figure(figsize=(20, 20))
+    for ii, layer in enumerate(range(len(attentions[0]))):
+        mean_attn = attentions[layer][:, input_len:].sum(0).detach().cpu() # [1, xx]
+        mean_attn = mean_attn[:, :128].numpy()
+        min_vals = mean_attn.min(axis=1, keepdims=True)
+        max_vals = mean_attn.max(axis=1, keepdims=True)
+        mean_attn = (mean_attn - min_vals) / (max_vals - min_vals)
+        # plot_attention_map(mean_attn)
+        plt.subplot(6, 6, ii + 1)
+        plt.imshow(mean_attn, alpha=0.7, cmap='rainbow',aspect='auto')
+        plt.title(str(ii))
+    plt.tight_layout()
+    plt.savefig("vis_attn_sparse_pretrain/attention_map_{}_{}.png".format(unique_id, answer))    
+    plt.close()
+            
+    for idx in range(output_len):
+        attn_list = []
+        # plt.figure(figsize=(64, 64))
+        fig, axs = plt.subplots(6, 6, figsize=(64, 64))
+        idx_map = np.arange(36)
+        idx_map = idx_map.reshape((6, 6))
+        pbar = tqdm(total = len(attentions[0]))
+        for ii, layer in enumerate(range(len(attentions[0]))):
+            pbar.update(1)
+            
+            mean_attn = attentions[layer][:,idx+input_len].sum(0).detach().cpu().unsqueeze(0) # [1, xx]
+            mean_attn = mean_attn[:, :128].numpy()
+            # print('max index in output {}:'.format(idx), mean_attn.argmax())
+            min_vals = mean_attn.min(axis=1, keepdims=True)
+            max_vals = mean_attn.max(axis=1, keepdims=True)
+            mean_attn = (mean_attn - min_vals) / (max_vals - min_vals)
+            
+            # Load pointclouds
+            pointclouds = data_dict['points']
+            colors = data_dict['colors']
+            colors = (colors / 255).cpu().squeeze(0).numpy()
+            knn_idx = knn_point(group_size, pointclouds, center)  # [bs ,128, 384]
+            knn_idx = knn_idx[0].view(-1) # [128 * 384]
+            
+            repeat_mean_attn = np.repeat(mean_attn, repeats=group_size, axis=-1)
+            activate_colors = torch.ones_like(pointclouds[...,0], device='cpu') * mean_attn.min()
+            activate_colors[:, knn_idx] = torch.from_numpy(repeat_mean_attn).float()
+            activate_colors = activate_colors[0].numpy()
+            activate_colors = cmap(activate_colors)[:,:3]
+            
+            mix_colors = colors * 0.6  +  activate_colors * 0.39
+            pcd_img = convert_pcd_to_image(pointclouds.cpu().numpy()[0], mix_colors)
+            x, y = np.where(idx_map==ii)
+            axs[x[0], y[0]].axis('off')
+            axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
+            # axs[x[0], y[0]].title(str(ii))
+        
+        dense_pcd = torch.load('data/SceneVerse/ScanNet/scan_data/pcd_with_global_alignment/{}.pth'.format(data_dict['scan_name'][0]))
+        pointclouds, colors = dense_pcd[0], dense_pcd[1]
+        colors = colors / 255
+        pcd_img = convert_pcd_to_image(pointclouds, colors)
+        x, y = np.where(idx_map==ii+1)
+        axs[x[0], y[0]].axis('off')
+        axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
+        
+        fig.tight_layout()
+        fig.savefig("vis_attn_sparse_pretrain/{}_{}_{}.png".format(idx, unique_id, answer))    
 
 def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None, finetune=False):
     print_log(f"[VALIDATION] Start validating epoch {epoch}", logger = logger)
@@ -378,15 +515,17 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                 if isinstance(v, torch.Tensor):
                     data_dict[k] = v.cuda()
             
-            with amp.autocast():
-                output_ids = base_model(data_dict, eval=True)
+            # with amp.autocast():
+            output_ids, attentions, center = base_model(data_dict, eval=True)
             outputs = dict(
                 output_ids=output_ids,
             )
             
-            outputs = all_gather_dict(outputs)
             gather_data_dict = {'episode_id': data_dict['episode_id'], 'task_name': data_dict['task_name']}
-            gather_data_dict = all_gather_dict(gather_data_dict)
+            if args.distributed:
+                outputs = all_gather_dict(outputs)
+                gather_data_dict = all_gather_dict(gather_data_dict)
+                
             # Flatten 2d list to 1d
             for k,v in gather_data_dict.items():
                 if isinstance(v, list):
@@ -416,6 +555,12 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                     candidates[task_name] = {key: [answer]}
                 else:
                     candidates[task_name][key] = [answer]
+
+            # Visualization attentino weights here
+            if args.visualization_attn:
+                assert int(os.environ["WORLD_SIZE"]) == 1, "Visualization attention weights only support single GPU"
+                visualization_attn(base_model, data_dict, attentions, output_ids, center, answers)
+
             barrier()
          
         for k, v in candidates.items():

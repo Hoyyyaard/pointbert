@@ -14,9 +14,9 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneExtendDataset.yaml, 
+  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
             others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
-  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneExtendDataset.yaml, 
+  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
             others: {subset: 'val', shuffle: False}}}
 model : {
   NAME: Openscene, 
@@ -29,8 +29,8 @@ model : {
 
   use_openscene: True,
   N_POINTS: 40000,
-  NUM_GROUP: 128,
-  GROUP_SIZE: 384, 
+  NUM_GROUP: 256,
+  GROUP_SIZE: 192, 
 
   REGION_N_POINTS: 8192,
   REGION_NUM_GROUP : 8,
@@ -44,7 +44,7 @@ model : {
 }
 
 finetune : True
-total_bs : 150
+total_bs : 120
 step_per_update : 1
 max_epoch : 5
 

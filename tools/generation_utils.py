@@ -36,8 +36,10 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
             attention_mask=attention_mask,
             vision_embeds=vision_embeds,
             vision_mask=vision_mask,
-            output_attentions=False,
+            output_attentions=True,
         )
+        
+        attentions = step_output.get('attentions', None)
         
         ## greedy decoding, find out whats the most possible word
         next_word_id = step_output.logits[:, -1, :].argmax(-1)
@@ -52,7 +54,7 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         attention_mask = torch.cat((attention_mask, torch.ones(batch, 1).to(attention_mask.device)), dim=1)
         # temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
         
-    return OrderedDict({'output_ids': output_ids.long(), 'attentions': step_output.get('attentions', None)})
+    return OrderedDict({'output_ids': output_ids.long(), 'attentions': attentions})
 
 
 def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:

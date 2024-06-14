@@ -143,7 +143,6 @@ class AdaptiveLLM(nn.Module):
         else:
             self.encoder = OpensceneEncoder(self._encoder_config)
 
-        # FIXME: Move to encoder
         self.xyz_projection = nn.Sequential(
             nn.Linear(3 , 128),
             nn.ReLU(),
@@ -158,6 +157,8 @@ class AdaptiveLLM(nn.Module):
         )
         # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
         # self.xyz_projection = self.xyz_projection.to(self.dtype)
+
+        # self.llm.model.embed_tokens.weight.requires_grad = True
     
     def wrap_model(self):
         if self._encoder_config.distributed == 'DDP':
@@ -369,6 +370,7 @@ class AdaptiveLLM(nn.Module):
             instruction_mask = data_dict['instruction_mask']
             
             output_ids = []
+            attentions = []
             
             for batch_id in range(vision_embed.shape[0]):
                 sample_instruction = instruction[batch_id]     
@@ -389,15 +391,20 @@ class AdaptiveLLM(nn.Module):
                 # vision_embed_per_batch = vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype)
                 output = generation(
                     self.llm, 
-                    vision_embeds=vision_embed[batch_id].unsqueeze(0),
-                    vision_mask=vision_mask[batch_id].unsqueeze(0),
+                    vision_embeds=vision_embed[batch_id].unsqueeze(0).to(self.dtype),
+                    vision_mask=vision_mask[batch_id].unsqueeze(0).to(self.dtype),
                     input_ids=sample_instruction[sample_mask == 1].unsqueeze(0),
-                    attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0)),
+                    attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0)).to(self.dtype),
                     max_length=128,   
                     **caption_config,
                 )
                 output_ids.append(output['output_ids'])
+                if not output['attentions'] is None:
+                    attn = torch.cat(output['attentions'], dim=0)
+                    attentions.append(attn)
             
             output_ids = torch.cat(output_ids, dim=0)
+            if len(attentions) > 0:
+                attentions = torch.stack(attentions, dim=0)
             
-            return output_ids
+            return output_ids, attentions, center

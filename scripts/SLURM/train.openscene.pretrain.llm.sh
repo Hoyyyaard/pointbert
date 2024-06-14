@@ -54,7 +54,8 @@ wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
+    --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-Openscene.yaml \
-    --exp_name 0606_Pretrain_Batch_GivenXYZ_AddPos_DetPrompt_Equal61kOSData_From[Openscene] \
+    --exp_name PExp0003_0613_TokenMask_AddPos_DetPrompt_Equal61kOSRData_Sybn_From[Openscene] \
     --resume
 

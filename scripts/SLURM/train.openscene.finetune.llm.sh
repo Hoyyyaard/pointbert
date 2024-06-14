@@ -54,8 +54,7 @@ wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
+    --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene.yaml \
-    --exp_name Exp0002_0607_LL3daData_AddPos_DetPrompt_FP32_From[Scratch] \
+    --exp_name Exp0007_0613_LL3daData_TokenMask_AddPos_DetPrompt_FP32_SyBN_From[Scratch] \
     --resume
-    # --ckpt experiments/Adaptive-LLM-Openscene/MultiScale_models/0605_Pretrain_Batch_TokenMask_AddPos_DetPrompt_Equal61kData_From[Openscene]/ckpt-last.pth \
-    # --resume
