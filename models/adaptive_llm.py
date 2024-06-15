@@ -13,6 +13,7 @@ import numpy as np
 import os 
 from utils.logger import *
 from pointnet2_ops import pointnet2_utils
+from tools.position_embedding import PositionEmbeddingCoordsSine
 
 
 class OpensceneEncoder(nn.Module):
@@ -86,7 +87,7 @@ class OpensceneEncoder(nn.Module):
         #     for id in region_idx:
         #         all_fts_mask[id, -region_token_num:] = 1
         
-        return all_fts, all_fts_mask, scene_center
+        return all_fts, all_fts_mask, scene_center, valid_neighborhood
         
         
 
@@ -125,9 +126,12 @@ class AdaptiveLLM(nn.Module):
             self.llm.model.gradient_checkpointing = True
             print_log("Gradient checkpointing is enabled", logger=self.logger)
         
-        # FIXME
+        if not self.OPENSCENE:
+            self.encoder = PointTransformer(self._encoder_config)
+        else:
+            self.encoder = OpensceneEncoder(self._encoder_config)
+        
         # Expand LLM vocalubary when finetune as there are grouding data
-        # if finetune:
         special_tokens = ['<obj>', '</obj>']
         xyz_prompt = '<loc{}>'
         for i in range(255):
@@ -138,16 +142,31 @@ class AdaptiveLLM(nn.Module):
         self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
         self.llm.resize_token_embeddings(len(self.tokenizer))
         
-        if not self.OPENSCENE:
-            self.encoder = PointTransformer(self._encoder_config)
-        else:
-            self.encoder = OpensceneEncoder(self._encoder_config)
-
-        self.xyz_projection = nn.Sequential(
-            nn.Linear(3 , 128),
+        # Visual Prompt version
+        self.visual_nquery = 8
+        self.box_prompt_projector = nn.Sequential(
+            nn.Linear(self._encoder_config.trans_dim, self._llm_config.hidden_size),
             nn.ReLU(),
-            nn.Linear(128, self._encoder_config.trans_dim),
+            nn.Linear(self._llm_config.hidden_size, self.visual_nquery * self._llm_config.hidden_size),
         )
+        self.click_prompt_projector = nn.Sequential(
+            nn.Linear(self._encoder_config.trans_dim, self._llm_config.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self._llm_config.hidden_size, self.visual_nquery * self._llm_config.hidden_size),
+        )
+        self.pos_emb3d = PositionEmbeddingCoordsSine(
+            d_pos=self._encoder_config.trans_dim, 
+            pos_type='fourier', 
+            normalize=True
+        )
+        
+        # Given xyz and token mask version
+        self.xyz_projection = nn.Sequential(
+            nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+        )
+        
         self.encoder_to_llm_projection = nn.Sequential(
             nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
             nn.ReLU(),
@@ -155,11 +174,7 @@ class AdaptiveLLM(nn.Module):
             nn.ReLU(),
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
         )
-        # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
-        # self.xyz_projection = self.xyz_projection.to(self.dtype)
 
-        # self.llm.model.embed_tokens.weight.requires_grad = True
-    
     def wrap_model(self):
         if self._encoder_config.distributed == 'DDP':
             return self.wrap_ddp()
@@ -276,7 +291,23 @@ class AdaptiveLLM(nn.Module):
         final_loss = torch.sum(loss_per_word * mask) / torch.sum(mask + 1e-6)
 
         return final_loss + 0.
-        
+    
+    def expand_prompt_representation(self, prompt_feature, prompt_mask=None):
+        # input:
+        #   prompt_feature: batch x nprompt x (ntkn x channel)
+        #   prompt_mask: batch x nprompt
+        # output:
+        #   prompt_feature: batch x (nprompt x ntkn) x channel
+        #   prompt_mask: batch x (nprompt x ntkn)
+        batch_size, nprompt = prompt_feature.shape[:2]
+        if prompt_mask is None:
+            prompt_mask = torch.ones_like(prompt_feature[..., 0])
+        prompt_mask = prompt_mask.unsqueeze(-1).repeat(1, 1, self.visual_nquery)
+        prompt_mask = prompt_mask.reshape(batch_size, nprompt * self.visual_nquery)
+        prompt_feature = prompt_feature.reshape(batch_size, nprompt, self.visual_nquery, self._llm_config.hidden_size)
+        prompt_feature = prompt_feature.reshape(batch_size, nprompt * self.visual_nquery, self._llm_config.hidden_size)
+        return prompt_feature, prompt_mask
+    
     def forward(self, data_dict, eval=False):
         with torch.no_grad():
                     
@@ -293,35 +324,66 @@ class AdaptiveLLM(nn.Module):
                 # Concat cls_tokens and encoder_tokens
                 cls_tokens = cls_tokens.unsqueeze(1)
                 vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
-            
-                # Only use cls token
-                # vision_embed = torch.cat([cls_tokens, encoder_tokens.max(1)[0]], dim = -1).unsqueeze(1)
-                
-                # Find "instance" in level and use avg feature to represent instance
-                # instance_indices = [i for i, x in enumerate(level) if x == 'instance' or x == 'region']
-                # if len(instance_indices) > 0:
-                #     vision_embed.requires_grad_(False)
-                #     instance_embed = vision_embed[instance_indices]
-                #     avg_instance_embed = (instance_embed[:, 0, :] + instance_embed[:, 1:, :].max(1)[0]).unsqueeze(1).repeat(1, vision_embed.shape[1], 1)
-                #     # padding_instance_embed = torch.zeros((avg_instance_embed.shape[0], vision_embed.shape[1]-1, vision_embed.shape[-1]), device=vision_embed.device)
-                #     # avg_instance_embed = torch.cat([avg_instance_embed, padding_instance_embed], dim=1)
-                #     vision_embed[instance_indices] = avg_instance_embed
-                    
-                #     vision_mask = torch.ones_like(vision_embed[..., 0])
-                #     vision_mask[instance_indices, 1:] = 0
-                # else:
                 vision_mask = torch.ones_like(vision_embed[..., 0])
             else:
-                vision_embed, vision_mask, center = self.encoder(points, data_dict['features'], level, data_dict['valid_label'])
+                vision_embed, vision_mask, center, valid_neighborhood = self.encoder(points, data_dict['features'], level, data_dict['valid_label'])
+                
+                # Visual prompt code
+                batch_size = vision_embed.shape[0]
+                # Generate box and click prompt
+                box_prompt = []
+                box_mask = data_dict['box_mask']
+                click_prompt = data_dict['click_query']
+                click_mask = data_dict['click_mask']
+                
+                for vi, (neighbor, mask) in enumerate(zip(valid_neighborhood, vision_mask)):
+                    # Donot need visual prompt for scene understanding
+                    if mask.sum() == len(mask):
+                        box_prompt.append(torch.zeros((1, 1, self._encoder_config.trans_dim), device=vision_embed.device))
+                    else:
+                        idx = neighbor.sum(dim=-1).argmax(dim=-1)
+                        box_prompt.append(vision_embed[vi][idx].unsqueeze(0).unsqueeze(0))
+                box_prompt = torch.cat(box_prompt, dim=0)
+                
+        visual_prompt = [torch.zeros(batch_size, 0, self._llm_config.hidden_size).to(vision_embed.device)]
+        visual_mask = [torch.zeros(batch_size, 0).to(vision_embed.device)]
+        box_prompt = self.box_prompt_projector(box_prompt)
+        box_prompt, box_mask = self.expand_prompt_representation(box_prompt, box_mask)
+        visual_prompt.append(box_prompt)
+        visual_mask.append(box_mask) 
         
-        vision_embed.requires_grad_(True)
-        center.requires_grad_(True)
-        # center = center.to(self.dtype)
-        # vision_embed = vision_embed.to(self.dtype)
-        # vision_embed = torch.cat([vision_embed, self.xyz_projection(center)], dim=-1)
-        vision_embed = vision_embed + self.xyz_projection(center)
-        # vision_embed = vision_embed * vision_mask.unsqueeze(-1)
-        vision_embed = self.encoder_to_llm_projection(vision_embed)
+        point_cloud_dims_min, _ = data_dict['points'][..., :3].min(dim=1)
+        point_cloud_dims_max, _ = data_dict['points'][..., :3].max(dim=1)
+        point_cloud_dims = [
+            point_cloud_dims_min,
+            point_cloud_dims_max,
+        ]
+        click_xyz = click_prompt     # batch x nquery x 3
+        click_prompt = self.pos_emb3d(click_xyz, input_range=point_cloud_dims)
+        click_prompt = self.click_prompt_projector(click_prompt.permute(0, 2, 1))
+        click_prompt, click_mask = self.expand_prompt_representation(click_prompt, click_mask)
+        visual_prompt.append(click_prompt)
+        visual_mask.append(click_mask)
+
+        ## concat box and click prompts as well as prompt masks
+        prompt_feature = torch.cat(visual_prompt, dim=1)   # batch x (2 x ntoken) x channel
+        prompt_mask = torch.cat(visual_mask, dim=1)        # batch x (2 x ntoken)
+                
+        # vision_embed.requires_grad_(True)
+        # center.requires_grad_(True)
+
+        pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
+        pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
+        vision_embed = self.encoder_to_llm_projection(vision_embed) + pos_embed
+        vision_mask = torch.ones_like(vision_embed[..., 0], device=vision_embed.device)
+        
+        vision_embed = torch.cat((vision_embed, prompt_feature), dim=1)
+        vision_mask = torch.cat((vision_mask, prompt_mask), dim=1)
+        
+        # Token mask version 
+        # vision_embed = vision_embed + self.xyz_projection(center)
+        # vision_embed = self.encoder_to_llm_projection(vision_embed)
+        
         # assert not torch.isnan(vision_embed).any()
         # assert not torch.isinf(vision_embed).any()
         if not eval:
