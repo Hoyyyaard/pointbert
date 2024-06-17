@@ -213,15 +213,19 @@ def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_met
                     all_weight_ckpt.pop(name)
         else:
             all_weight_ckpt = {'llm.{}'.format(k):v for k,v in llm_weight_ckpt.items()}
-            for k,v in base_model.encoder_to_llm_projection.state_dict().items():
-                all_weight_ckpt['encoder_to_llm_projection.{}'.format(k)] = v
-            for k,v in base_model.xyz_projection.state_dict().items():
-                all_weight_ckpt['xyz_projection.{}'.format(k)] = v
-            # self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(self.dtype)
-            # self.xyz_projection = self.xyz_projection.to(self.dtype)
-            # for k,v in llm_weight_ckpt.items():
-            #     all_weight_ckpt['llm.{}'.format(k)] = v
-            # torch.save(llm_weight_ckpt,os.path.join(args.experiment_path, 'llm_{}'.format(prefix) + '.pth'), _use_new_zipfile_serialization=False)
+            for k,v in base_model.state_dict().items():
+                if k.find('llm.') != -1:
+                    all_weight_ckpt[k] = v
+            # for k,v in base_model.encoder_to_llm_projection.state_dict().items():
+            #     all_weight_ckpt['encoder_to_llm_projection.{}'.format(k)] = v
+            # for k,v in base_model.box_prompt_projector.state_dict().items():
+            #     all_weight_ckpt['box_prompt_projector.{}'.format(k)] = v
+            # for k,v in base_model.click_prompt_projector.state_dict().items():
+            #     all_weight_ckpt['click_prompt_projector.{}'.format(k)] = v
+            # for k,v in base_model.pos_emb3d.state_dict().items():
+            #     all_weight_ckpt['pos_emb3d.{}'.format(k)] = v
+            # for k,v in base_model.xyz_projection.state_dict().items():
+            #     all_weight_ckpt['xyz_projection.{}'.format(k)] = v
         torch.save({
                     'base_model' : all_weight_ckpt,
                     'optimizer' : optimizer.state_dict(),

@@ -1992,7 +1992,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             # build prompts
             if self.config.subset == 'train' and len(anno['object_ids']) == 1:
-                object_points = points[instance_labels == (anno['object_ids'][0] + 1)]    
+                object_points = points[instance_labels == (anno['object_ids'][0])]    
                 center, whl = self.convert_pc_to_box(object_points)
             
                 point_cloud_dims_min = points.min(axis=0)

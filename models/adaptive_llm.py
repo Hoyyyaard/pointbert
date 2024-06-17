@@ -162,9 +162,9 @@ class AdaptiveLLM(nn.Module):
         
         # Given xyz and token mask version
         self.xyz_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
+            nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
             nn.ReLU(),
-            nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+            nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
         )
         
         self.encoder_to_llm_projection = nn.Sequential(
@@ -202,6 +202,9 @@ class AdaptiveLLM(nn.Module):
         self.encoder = self.encoder.to(torch.cuda.current_device())
         self.encoder_to_llm_projection = self.encoder_to_llm_projection.to(torch.cuda.current_device())
         self.xyz_projection = self.xyz_projection.to(torch.cuda.current_device())
+        self.pos_emb3d = self.pos_emb3d.to(torch.cuda.current_device())
+        self.box_prompt_projector = self.box_prompt_projector.to(torch.cuda.current_device())
+        self.click_prompt_projector = self.click_prompt_projector.to(torch.cuda.current_device())
         print_log('Using FSDP')
         return self
     
@@ -374,7 +377,7 @@ class AdaptiveLLM(nn.Module):
 
         pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
         pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
-        vision_embed = self.encoder_to_llm_projection(vision_embed) + pos_embed
+        vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
         vision_mask = torch.ones_like(vision_embed[..., 0], device=vision_embed.device)
         
         vision_embed = torch.cat((vision_embed, prompt_feature), dim=1)
