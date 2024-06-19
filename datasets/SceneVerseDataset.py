@@ -17,6 +17,11 @@ import copy
 import json
 from transformers import AutoTokenizer
 
+SYSTEM_PROMPT = "A chat between a curious human and an artificial intelligence assistant.\
+The assistant gives helpful, detailed, and polite answers to the human's questions.\
+The visual content will be provided with the following format: <scene>visual content</scene> and\
+the object bounding box will be provided with the following format: <obj>x,y,z,width,height,length</obj>\n"
+
 TASK_PROMPT = {
     # 'object_caption': [
     #     '### human: describe this object ### assistant:',
@@ -53,30 +58,6 @@ TASK_PROMPT = {
     #     # '### human: outline the relationship between the objects in the designated part of the 3D scene. ### assistant:',
     #     # '### human: depict the interaction between the objects in the stated part of the 3D scene. ### assistant:',
     # ],
-    # # 'scene_caption_with_bbox': [
-    # #     '### human: describe the scene given 3D context and output the location of these objects. ### assistant:',
-    # #     '### human: provide a description of the scene in the given 3D context and point out these object in the scene. ### assistant:',
-    # #     '### human: explain the details of the scene within the specified 3D context and locate them. ### assistant:',
-    # #     '### human: offer an overview of the scene in the indicated 3D context and output the location of these objects. ### assistant:',
-    # #     '### human: describe the features of the scene in the provided 3D context and output the location of these objects. ### assistant:',
-    # #     '### human: detail the elements of the scene in the mentioned 3D context and output the location of these objects. ### assistant:',
-    # #     '### human: give an explanation of the scene in the designated 3D context and output the location of these objects. ### assistant:',
-    # #     '### human: summarize the scene in the described 3D context and point out these object in the scene. ### assistant:',
-    # #     '### human: illustrate the scene within the given 3D context and point out these object in the scene. ### assistant:',
-    # #     '### human: characterize the scene in the specific 3D context and point out these object in the scene. ### assistant:',
-    # # ],
-    # # 'region_caption_with_bbox': [
-    # #     '### human: describe the relationship between the objects gievn part of the 3D scene and output the location of these objects. ### assistant:',
-    # #     '### human: describe how the objects are related in the specified part of the 3D scene and point out these object in the scene. ### assistant:',
-    # #     '### human: provide details on the relationship between the objects in the indicated part of the 3D scene and locate them. ### assistant:',
-    # #     '### human: offer an explanation of the relationship between the objects you located in the described part of the 3D scene. ### assistant:',
-    # #     '### human: detail the interaction between the objects in the given segment of the 3D scene and output the location of these objects. ### assistant:',
-    # #     '### human: find the position of the object and illustrate their relationship between them within the specified part of the 3D scene. ### assistant:',
-    # #     '### human: summarize the connection between the objects in the mentioned part of the 3D scene and point out these location. ### assistant:',
-    # #     '### human: characterize the relationship between the objects in the provided part of the 3D scene and output the location of these objects. ### assistant:',
-    # #     '### human: outline the relationship between the objects in the designated part of the 3D scene and output the location of these objects. ### assistant:',
-    # #     '### human: depict the interaction between the objects in the stated part of the 3D scene and output the location of these objects. ### assistant:',
-    # # ],
     # 'object_grouding': [
     #     '### human: locate the object in the 3D scene given the object description {caption}. ### assistant:',
     #     # '### human: find the object in the 3D scene using the provided description {caption}. ### assistant:',
@@ -90,19 +71,19 @@ TASK_PROMPT = {
     #     # '### human: seek out the object in the 3D scene from the given details {caption}. ### assistant:',
     #     # '### human: identify where the object is located in the 3D scene using the description {caption}. ### assistant:',
     # ],
-    # # 'scene_grouding':[
-    # #     '### human: locate all objects given the 3D scene. ### assistant:',
-    # #     '### human: identify all objects in the given 3D scene. ### assistant:',
-    # #     '### human: find every object in the provided 3D scene. ### assistant:',
-    # #     '### human: list all objects present in the specified 3D scene. ### assistant:',
-    # #     '### human: pinpoint each object in the given 3D scene. ### assistant:',
-    # #     '### human: locate every object in the described 3D scene. ### assistant:',
-    # #     '### human: determine the location of all objects in the provided 3D scene. ### assistant:',
-    # #     '### human: identify the position of each object in the given 3D scene. ### assistant:',
-    # #     '### human: find and list all objects in the specified 3D scene. ### assistant:',
-    # #     '### human: recognize all objects within the given 3D scene. ### assistant:',
-    # #     '### human: enumerate every object in the provided 3D scene. ### assistant:',
-    # # ],
+    # 'scene_grouding':[
+    #     '### human: locate all objects given the 3D scene. ### assistant:',
+    #     '### human: identify all objects in the given 3D scene. ### assistant:',
+    #     '### human: find every object in the provided 3D scene. ### assistant:',
+    #     '### human: list all objects present in the specified 3D scene. ### assistant:',
+    #     '### human: pinpoint each object in the given 3D scene. ### assistant:',
+    #     '### human: locate every object in the described 3D scene. ### assistant:',
+    #     '### human: determine the location of all objects in the provided 3D scene. ### assistant:',
+    #     '### human: identify the position of each object in the given 3D scene. ### assistant:',
+    #     '### human: find and list all objects in the specified 3D scene. ### assistant:',
+    #     '### human: recognize all objects within the given 3D scene. ### assistant:',
+    #     '### human: enumerate every object in the provided 3D scene. ### assistant:',
+    # ],
     # 'object_caption_given_bbox':[
     #     '### human: describe the object in the 3D scene given the object bounding box {bbox}. ### assistant:',
     #     # '### human: provide a description of the object in the 3D scene using the given bounding box {bbox}. ### assistant:',
@@ -128,7 +109,7 @@ TASK_PROMPT = {
     #     # '### human: answer the inquiry on the 3D scene briefly. {question} ### assistant:',
     #     # '### human: give a brief response to the question related to the 3D scene. {question} ### assistant:',
     #     # '### human: offer a short answer to the question regarding the 3D scene. {question} ### assistant:',
-    # ]
+    # ],
     
     'object_caption': [
         dict(
@@ -178,6 +159,13 @@ TASK_PROMPT = {
             do_localize=True
         ),
     ],
+    'region_caption':[
+        dict(
+            instruction='### human: describe how this objects are related in the specified part of the 3D scene. ### assistant:',
+            answer='{answer}',
+            do_localize=False
+        ),
+    ]
     
 }
 
@@ -618,7 +606,7 @@ class RegionVerseDataset(SceneVerseDataset):
         region_points, region_colors, region_instance_labels = self._all_region[index]
         
         points, colors, instance_labels = self.down_sample(points, colors, instance_labels)
-        region_points = self.pc_norm(region_points)
+        # region_points = self.pc_norm(region_points)
         return None, None, (region_points, self._num_groups, self._group_size)
     
     def down_sample(self, points, colors, instance_labels):
@@ -663,18 +651,23 @@ def _augment_pointcloud(points):
 class SceneVerseLLMPretrainDataset(Dataset):
     def __init__(self, config):
         super().__init__()
+        
+        self.config = config
+        
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = 'right'
         
-        # FIXME
-        special_tokens = ['<obj>', '</obj>']
-        xyz_prompt = '<loc{}>'
-        for i in range(255):
-            special_tokens.append(xyz_prompt.format(i))
-        whl_prompt = '<whl{}>'
-        for i in range(255):
-            special_tokens.append(whl_prompt.format(i))
+        self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
+        self.VP_TOKEN = '<vp_placehold>'
+        
+        special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
+        # xyz_prompt = '<loc{}>'
+        # for i in range(255):
+        #     special_tokens.append(xyz_prompt.format(i))
+        # whl_prompt = '<whl{}>'
+        # for i in range(255):
+        #     special_tokens.append(whl_prompt.format(i))
         self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
         
         # If use openscene as encoder
@@ -782,8 +775,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
             # ~136k
             
             ## As HM3D only contains annotations from template like 'the pointcloud of xxx'
-            # if dataset_name == 'HM3D':
-            #     continue
+            if dataset_name == 'HM3D':
+                continue
             
             ## Openscene as encoder only can use scene object caption data
             if self.OPENSCENE:
@@ -907,28 +900,10 @@ class SceneVerseLLMPretrainDataset(Dataset):
             self.all_scene_caption = self.all_scene_caption[-2000:]
             self.all_relation_caption = self.all_relation_caption[-2000:]
             self.all_object_caption = self.all_object_caption[-2000:]
-                
-        
-        # Debug
-        # self.all_scene_caption = self.all_scene_caption[:100]
-        # self.all_relation_caption = self.all_relation_caption[:100]
-        # self.all_object_caption = self.all_object_caption[:100]   
 
         print_log(f'[DATASET] {len(self.all_scene_caption)} scene captions were loaded from scan data', logger = 'SceneVerse')
         print_log(f'[DATASET] {len(self.all_relation_caption)} relation captions were loaded from scan data', logger = 'SceneVerse')
         print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data and objaverse', logger = 'SceneVerse')
-        
-        # Add Unique ID for each episode
-        # episode_id = 0
-        # for data in self.all_scene_caption:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
-        # for data in self.all_relation_caption:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
-        # for data in self.all_object_caption:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
         
         # Prepare corpus for evaluation
         self.corpus = {
@@ -948,61 +923,6 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self.order_episodes.extend(self.all_object_caption)
         self.order_levels.extend(['instance'] * len(self.all_object_caption))       
         
-        # None shuffle code
-        # As diffent dataset has different number of points, we need to specify the dataset squence order 
-        # to make sure samples from on batch come from the same level dataset
-        # batch_size_pre_rank = config.tbs
-        # while self.all_scene_caption or self.all_relation_caption or self.all_object_caption:
-        #     # total_remain_epi = len(self.all_scene_caption) + len(self.all_relation_caption) + len(self.all_object_caption)
-        #     # prob = np.array([len(self.all_scene_caption), len(self.all_relation_caption), len(self.all_object_caption)]) / total_remain_epi
-        #     # level_list = np.array(['scene', 'region', 'instance'],dtype=object)
-        #     # select_level = np.random.choice(level_list, p=prob.ravel())
-        #     # if select_level == 'scene':
-        #     #     if len(self.all_scene_caption) < batch_size_pre_rank:
-        #     #         pop_num  = len(self.all_scene_caption)
-        #     #         [self.all_scene_caption.pop(0) for _ in range(pop_num)]
-        #     #     else:
-        #     #         self.order_episodes.extend([self.all_scene_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #     #         self.order_levels.extend(['scene'] * batch_size_pre_rank)
-        #     # elif select_level == 'region':
-        #     #     if len(self.all_relation_caption) < batch_size_pre_rank:
-        #     #         pop_num  = len(self.all_relation_caption)
-        #     #         [self.all_relation_caption.pop(0) for _ in range(pop_num)]
-        #     #     else:
-        #     #         self.order_episodes.extend([self.all_relation_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #     #         self.order_levels.extend(['region'] * batch_size_pre_rank)
-        #     # elif select_level == 'instance':
-        #     #     if len(self.all_object_caption) < batch_size_pre_rank:
-        #     #         pop_num  = len(self.all_object_caption)
-        #     #         [self.all_object_caption.pop(0) for _ in range(pop_num)]
-        #     #     else:
-        #     #         self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #     #         self.order_levels.extend(['instance'] * batch_size_pre_rank)
-            
-        #     if self.all_scene_caption:
-        #         if len(self.all_scene_caption) < batch_size_pre_rank:
-        #             pop_num  = len(self.all_scene_caption)
-        #             [self.all_scene_caption.pop(0) for _ in range(pop_num)]
-        #         else:
-        #             self.order_episodes.extend([self.all_scene_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #             self.order_levels.extend(['scene'] * batch_size_pre_rank)
-        #     if self.all_relation_caption:
-        #         if len(self.all_relation_caption) < batch_size_pre_rank:
-        #             pop_num  = len(self.all_relation_caption)
-        #             [self.all_relation_caption.pop(0) for _ in range(pop_num)]
-        #         else:
-        #             self.order_episodes.extend([self.all_relation_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #             self.order_levels.extend(['region'] * batch_size_pre_rank)
-        #     if self.all_object_caption:
-        #         if len(self.all_object_caption) < batch_size_pre_rank:
-        #             pop_num  = len(self.all_object_caption)
-        #             [self.all_object_caption.pop(0) for _ in range(pop_num)]
-        #         else:
-        #             self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #             self.order_levels.extend(['instance'] * batch_size_pre_rank)
-        # # Reverse the list to ensure that the data in the final stage comes evenly from different levels of the dataset
-        # self.order_episodes = self.order_episodes[::-1]
-        # self.order_levels = self.order_levels[::-1]
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
 
@@ -1101,7 +1021,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
     
     def _encode_box_coords(self, gt_box_centers_normalized, gt_box_sizes_normalized):
         grid_size_3d = 255
-        BOX_FORMAT = '<obj>{}, {}, {}, {}, {}, {}</obj>'
+        # BOX_FORMAT = '<obj><loc{}><loc{}><loc{}><whl{}><whl{}><whl{}></obj>'
+        BOX_FORMAT = '<obj>{},{},{},{},{},{}</obj>'
         center_normalized = gt_box_centers_normalized
         size_normalized = gt_box_sizes_normalized
         box_normalized = np.hstack((center_normalized, size_normalized))    # (-1, 6)
@@ -1191,9 +1112,14 @@ class SceneVerseLLMPretrainDataset(Dataset):
             points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
             points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._npoint)
             
+            click_query = np.zeros((1, 3))
+            click_mask = np.zeros((1,))
+            box_mask = np.zeros((1,))
+            box_query = np.zeros((features.shape[-1],))
+            
             if not self.OPENSCENE:
                 points = _augment_pointcloud(points)
-            points = self.pc_norm(points)
+            # points = self.pc_norm(points)
             
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
@@ -1208,14 +1134,20 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'level': level,
                 'scan_name': scan_name,
                 'task_name': task_name,
-                'episode_id': data['episode_id']
+                'episode_id': data['episode_id'],
+                'click_query': click_query.astype(np.float32),
+                'click_mask': click_mask.astype(np.float32),
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
             }
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
                 ret_dict['valid_label'] = np.ones_like(instance_labels)
             
-            intruction = random.choice(TASK_PROMPT[task_name])
+            intruction = anno['utterance']
+        
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']
@@ -1245,7 +1177,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 points, colors, instance_labels = region_data['points'], region_data['colors'], region_data['instance_labels']
                 points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, None, self._region_npoint)
                 points = _augment_pointcloud(points)
-                points = self.pc_norm(points)
+                # points = self.pc_norm(points)
             else:
                 points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
                 inst_pc = points[instance_labels == instance_id]
@@ -1262,32 +1194,50 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 # instance_labels = instance_labels[indices_within_bbox]
                 # features = features[indices_within_bbox]
                 
-                # points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._region_npoint)
+                points, colors, instance_labels, features = self.down_sample(points, colors, instance_labels, features, self._npoint)
+                
+                click_query = np.zeros((1, 3))
+                click_mask = np.zeros((1,))
+                box_mask = np.zeros((1,))
+                box_query = np.zeros((features.shape[-1],))
                 
                 level = 'scene'
-                valid_label = np.zeros_like(instance_labels)
-                valid_label[indices_within_bbox] = 1
-                points, colors, valid_label, features = self.down_sample(points, colors, valid_label, features, self._npoint)
-                points = self.pc_norm(points)
-            
+                # valid_label = np.zeros_like(instance_labels)
+                # valid_label[indices_within_bbox] = 1
+                # points, colors, valid_label, features = self.down_sample(points, colors, valid_label, features, self._npoint)
+                
+                # points = self.pc_norm(points)
+                valid_label = np.ones_like(instance_labels)
+                if random.random() < 0.5 or self.config.subset == 'val':
+                    click_query[0] = random.choice(points[instance_labels == instance_id])
+                    click_mask[0] = 1
+                else:
+                    box_mask[0] = 1
+                    box_query = features[instance_labels == instance_id].mean(0)
+                
+                
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
             answers = anno['utterance']
             
             # Add bbox after the instance
-            if data.get('text_in_caption'):
-                _, _, _, _, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
-                text_in_caption = data['text_in_caption']
-                for text, pos in text_in_caption:
-                    if text in answers:
-                        for k,v in inst_to_label.items():
-                            if v == text and sum(instance_labels == int(k)) > 0 :
-                                bbox = self.instance_id_to_bbox_str(int(k), instance_labels, points[:, :3])
-                                answers = answers[:pos + len(text)] + ' ' + bbox + ' ' + answers[pos + len(text):]
-                intruction = random.choice(TASK_PROMPT[f'{task_name}_with_bbox'])
-            else:
-                # intruction = random.choice(TASK_PROMPT[task_name]).format(object_name=anno['instance_type'])
-                intruction = random.choice(TASK_PROMPT[task_name])
+            # if data.get('text_in_caption'):
+            #     _, _, _, _, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+            #     text_in_caption = data['text_in_caption']
+            #     for text, pos in text_in_caption:
+            #         if text in answers:
+            #             for k,v in inst_to_label.items():
+            #                 if v == text and sum(instance_labels == int(k)) > 0 :
+            #                     bbox = self.instance_id_to_bbox_str(int(k), instance_labels, points[:, :3])
+            #                     answers = answers[:pos + len(text)] + ' ' + bbox + ' ' + answers[pos + len(text):]
+            #     intruction = random.choice(TASK_PROMPT[f'{task_name}_with_bbox'])
+            # else:
+            #     # intruction = random.choice(TASK_PROMPT[task_name]).format(object_name=anno['instance_type'])
+            #     intruction = random.choice(TASK_PROMPT[task_name])
+            intruction = random.choice(TASK_PROMPT[task_name])['instruction']
+            
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             llm_inputs = self.tokenizer.batch_encode_plus(
@@ -1306,7 +1256,11 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'level': level,
                 'scan_name': scan_name,
                 'task_name': task_name,
-                'episode_id': data['episode_id']
+                'episode_id': data['episode_id'],
+                'click_query': click_query.astype(np.float32),
+                'click_mask': click_mask.astype(np.float32),
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
             }
             
             if self.OPENSCENE:
@@ -1335,7 +1289,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     colors = obj_pcd[:, 3:]
                     points, colors, _, _ = self.down_sample(points, colors, npoint=self._instance_npoint)
                     points = _augment_pointcloud(points)
-                    points = self.pc_norm(points)
+                    # points = self.pc_norm(points)
                 else:
                     points, colors, _, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
                     instance_id = int(anno['target_id'])
@@ -1344,7 +1298,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
                     instance_labels = instance_labels[instance_labels == instance_id]
                     points, colors, _, _ = self.down_sample(object_points, object_colors, instance_labels, npoint=self._instance_npoint)
                     points = _augment_pointcloud(points)
-                    points = self.pc_norm(points)
+                    # points = self.pc_norm(points)
             else:
                 points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
                 instance_id = int(anno['target_id'])
@@ -1359,7 +1313,19 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 valid_label = np.zeros_like(instance_labels)
                 valid_label[instance_labels == instance_id] = 1
                 points, colors, valid_label, features = self.down_sample(points, colors, valid_label, features, npoint=self._npoint)
-                points = self.pc_norm(points)
+                # points = self.pc_norm(points)
+                
+                click_query = np.zeros((1, 3))
+                click_mask = np.zeros((1,))
+                box_mask = np.zeros((1,))
+                box_query = np.zeros((features.shape[-1],))
+                
+                if random.random() < 0.5 or self.config.subset == 'val':
+                    click_query[0] = random.choice(points[valid_label == 1])
+                    click_mask[0] = 1
+                else:
+                    box_mask[0] = 1
+                    box_query = features[valid_label==1].mean(0)
                 
                 # Given XYZ Implementation
                 # dense_object_points = points[instance_labels == instance_id]
@@ -1377,31 +1343,40 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 # points = self.pc_norm(points)
                 # object_points = points[instance_labels == instance_id]
                     
-                # center, whl = self.convert_pc_to_box(object_points)
+                object_points = points[valid_label == 1] 
+                center, whl = self.convert_pc_to_box(object_points)
                 
-                # point_cloud_dims_min = points.min(axis=0)
-                # point_cloud_dims_max = points.max(axis=0)
+                point_cloud_dims_min = points.min(axis=0)
+                point_cloud_dims_max = points.max(axis=0)
 
-                # box_centers = center.astype(np.float32)
+                box_centers = center.astype(np.float32)
                 
-                # center_normalizing_range = [
-                #     np.zeros((1, 3), dtype=np.float32),
-                #     np.ones((1, 3), dtype=np.float32),
-                # ]
-                # box_centers_normalized = self._shift_scale_points(
-                #     box_centers[None, ...],
-                #     src_range=[
-                #         point_cloud_dims_min[None, ...],
-                #         point_cloud_dims_max[None, ...],
-                #     ],
-                #     dst_range=center_normalizing_range,
-                # )
-                # mult_factor = point_cloud_dims_max - point_cloud_dims_min
-                # box_sizes_normalized = self._scale_points(
-                #     whl.astype(np.float32)[None, ...],
-                #     mult_factor=1.0 / mult_factor[None, ...],
-                # )
-                # bbox_str = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
+                center_normalizing_range = [
+                    np.zeros((1, 3), dtype=np.float32),
+                    np.ones((1, 3), dtype=np.float32),
+                ]
+                box_centers_normalized = self._shift_scale_points(
+                    box_centers[None, ...],
+                    src_range=[
+                        point_cloud_dims_min[None, ...],
+                        point_cloud_dims_max[None, ...],
+                    ],
+                    dst_range=center_normalizing_range,
+                )
+                mult_factor = point_cloud_dims_max - point_cloud_dims_min
+                box_sizes_normalized = self._scale_points(
+                    whl.astype(np.float32)[None, ...],
+                    mult_factor=1.0 / mult_factor[None, ...],
+                )
+                boxes = self._encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
+            
+            if self.config.subset == 'train':
+                prompt = deepcopy(random.choice(TASK_PROMPT[task_name]))
+            else:
+                prompt = deepcopy(TASK_PROMPT[task_name][0])
+                
+            intruction = prompt['instruction']
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             
             # Concat xyz with rgb
             # points = np.concatenate([points, colors/255], 1)
@@ -1417,6 +1392,10 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 'scan_name': scan_name,
                 'task_name': task_name,
                 'episode_id': data['episode_id'],
+                'click_query': click_query.astype(np.float32),
+                'click_mask': click_mask.astype(np.float32),
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
             }
             
             if self.OPENSCENE:
@@ -1424,17 +1403,20 @@ class SceneVerseLLMPretrainDataset(Dataset):
                 ret_dict['valid_label'] = valid_label
             
             # HM3D only has annotation:"the poinclouds of xxx"
-            if not scan_name == 'HM3D':
-                # TokenMask Implementation
-                intruction = random.choice(TASK_PROMPT[task_name]) 
-                # XYZ Implementation
-                # intruction = random.choice(TASK_PROMPT['object_caption_given_bbox']).format(bbox=bbox_str)
-            else:
-                intruction = '### human: what is this poinclouds? ### assistant:'
-                # intruction = '### human: describe what object the pointcloud is in the 3D scene given the object bounding box {} ### assistant:'.format(bbox_str)
+            # if not scan_name == 'HM3D':
+            #     # TokenMask Implementation
+            #     intruction = random.choice(TASK_PROMPT[task_name]) 
+            #     # XYZ Implementation
+            #     # intruction = random.choice(TASK_PROMPT['object_caption_given_bbox']).format(bbox=bbox_str)
+            # else:
+            #     intruction = '### human: what is this poinclouds? ### assistant:'
+            #     # intruction = '### human: describe what object the pointcloud is in the 3D scene given the object bounding box {} ### assistant:'.format(bbox_str)
+            
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             answers = anno['utterance']
+            answers = prompt['answer'].format(locations=boxes, caption=answers)
+            
             llm_inputs = self.tokenizer.batch_encode_plus(
             [' '.join((intruction, answers, self.tokenizer.eos_token))],
             **self.tokenizer_config
@@ -1474,13 +1456,16 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         
         self.config = config
         
-        special_tokens = ['<obj>', '</obj>']
-        xyz_prompt = '<loc{}>'
-        for i in range(255):
-            special_tokens.append(xyz_prompt.format(i))
-        whl_prompt = '<whl{}>'
-        for i in range(255):
-            special_tokens.append(whl_prompt.format(i))
+        self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
+        self.VP_TOKEN = '<vp_placehold>'
+        
+        special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
+        # xyz_prompt = '<loc{}>'
+        # for i in range(255):
+        #     special_tokens.append(xyz_prompt.format(i))
+        # whl_prompt = '<whl{}>'
+        # for i in range(255):
+        #     special_tokens.append(whl_prompt.format(i))
         self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
         
         # If use openscene as encoder
@@ -1721,21 +1706,6 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         if not hasattr(self, 'all_object_grouding'):
             self.all_object_grouding = []
         
-        # Add Unique ID for each episode
-        # episode_id = 0
-        # for data in self.all_scene_qa:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
-        # for data in self.all_scene_understanding:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
-        # # for data in self.all_object_caption:
-        # #     data['episode_id'] = episode_id
-        # #     episode_id += 1
-        # for data in self.all_object_grouding:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
-        
         # Prepare corpus for evaluation
         self.corpus = {
             'scene_qa': copy.deepcopy(self.all_scene_qa),
@@ -1745,52 +1715,19 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             'scene_understanding': copy.deepcopy(self.all_scene_understanding)
         }
         
-        # Debug
-        # self.all_scene_qa = self.all_scene_qa[:100]
-        # self.all_scene_understanding = self.all_scene_understanding[:100]
-        # self.all_object_grouding = self.all_object_grouding[:100]
-        
         all_scene_level_data = []
         all_scene_level_data.extend(self.all_scene_qa)
         all_scene_level_data.extend(self.all_scene_understanding)
         all_scene_level_data.extend(self.all_object_grouding)
         
-        # random.shuffle(all_scene_level_data)
-        # dist.broadcast_object_list(all_scene_level_data, src=0)
-        # random.shuffle(self.all_object_caption)
-        # dist.broadcast_object_list(self.all_object_caption, src=0)
-        # batch_size_pre_rank = config.tbs
-        # self.order_episodes = []
-        # while all_scene_level_data or self.all_object_caption:
-        #     if self.all_object_caption:
-        #         if len(self.all_object_caption) < batch_size_pre_rank:
-        #             pop_num  = len(self.all_object_caption)
-        #             [self.all_object_caption.pop(0) for _ in range(pop_num)]
-        #         else:
-        #             self.order_episodes.extend([self.all_object_caption.pop(0) for _ in range(batch_size_pre_rank)])
-        #     if all_scene_level_data:
-        #         if len(all_scene_level_data) < batch_size_pre_rank:
-        #             pop_num  = len(all_scene_level_data)
-        #             [all_scene_level_data.pop(0) for _ in range(pop_num)]
-        #         else:
-        #             self.order_episodes.extend([all_scene_level_data.pop(0) for _ in range(batch_size_pre_rank)])
-        
-        # self.order_episodes = self.order_episodes[::-1]
-        
         self.order_episodes = []
         self.order_episodes.extend(self.all_scene_qa)
-        # self.order_episodes.extend(self.all_object_caption)
-        self.order_episodes.extend(self.all_scene_understanding)
-        if hasattr(self, 'all_object_grouding'):
-            self.order_episodes.extend(self.all_object_grouding)
-            
-        # Add Unique ID for each episode
-        # episode_id = 0
-        # for data in self.order_episodes:
-        #     data['episode_id'] = episode_id
-        #     episode_id += 1
+        if self.config.subset == 'train':
+            # self.order_episodes.extend(self.all_object_caption)
+            self.order_episodes.extend(self.all_scene_understanding)
+            if hasattr(self, 'all_object_grouding'):
+                self.order_episodes.extend(self.all_object_grouding)
 
-        
         print_log(f'[DATASET] {len(self.order_episodes)} total samples were loaded for split {config.subset}', logger = 'SceneVerse')
        
     
@@ -1888,7 +1825,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
     
     def _encode_box_coords(self, gt_box_centers_normalized, gt_box_sizes_normalized):
         grid_size_3d = 255
-        BOX_FORMAT = '<obj> <loc{}> <loc{}> <loc{}> <whl{}> <whl{}> <whl{}> </obj>'
+        # BOX_FORMAT = '<obj><loc{}><loc{}><loc{}><whl{}><whl{}><whl{}></obj>'
+        BOX_FORMAT = '<obj>{},{},{},{},{},{}</obj>'
         center_normalized = gt_box_centers_normalized
         size_normalized = gt_box_sizes_normalized
         box_normalized = np.hstack((center_normalized, size_normalized))    # (-1, 6)
@@ -1938,7 +1876,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
         
         self.tokenizer_config = dict(
-            max_length=256, 
+            max_length=300, 
             padding='max_length', 
             truncation='longest_first', 
             return_tensors='np'
@@ -1953,11 +1891,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             click_query = np.zeros((1, 3))
             click_mask = np.zeros((1,))
             box_mask = np.zeros((1,))
+            box_query = np.zeros((features.shape[-1],))
             
             if not self.OPENSCENE:
                 points = _augment_pointcloud(points)
                 
-            points = self.pc_norm(points)
+            # points = self.pc_norm(points)
             
             if self.config.subset == 'train' and random.random() < 0.25:
                 target_obj_id = random.choice(anno['object_ids'])
@@ -1980,7 +1919,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'episode_id': data['episode_id'],
                 'click_query': click_query.astype(np.float32),
                 'click_mask': click_mask.astype(np.float32),
-                'box_mask': box_mask.astype(np.float32)
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
             }
             
             if self.OPENSCENE:
@@ -1988,7 +1928,6 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 ret_dict['valid_label'] = np.ones_like(instance_labels)
             
             question = anno['question']
-            # intruction = random.choice(TASK_PROMPT[task_name]).format(question=question)
             
             # build prompts
             if self.config.subset == 'train' and len(anno['object_ids']) == 1:
@@ -2024,10 +1963,13 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 boxes = ''
             intruction = prompt['instruction'].format(locations=boxes, question=question)
             
+            # Add special token 
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
-            # answers = anno['answers'][0]
-            answers = prompt['answer'].format(locations=boxes, answer=anno['answers'][0])
+            answers = anno['answers'][0]
+            # answers = prompt['answer'].format(locations=boxes, answer=anno['answers'][0])
             llm_inputs = self.tokenizer.batch_encode_plus(
             [' '.join((intruction, answers, self.tokenizer.eos_token))],
             **self.tokenizer_config
@@ -2052,10 +1994,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             click_query = np.zeros((1, 3))
             click_mask = np.zeros((1,))
             box_mask = np.zeros((1,))
+            box_query = np.zeros((features.shape[-1],))
             
             if not self.OPENSCENE:
                 points = _augment_pointcloud(points)
-            points = self.pc_norm(points)
+            # points = self.pc_norm(points)
             
             # points = np.concatenate([points, colors/255], 1)
             points = _padding_pointcloud(points)
@@ -2072,7 +2015,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'episode_id': data['episode_id'],
                 'click_query': click_query.astype(np.float32),
                 'click_mask': click_mask.astype(np.float32),
-                'box_mask': box_mask.astype(np.float32)
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
             }
             
             if self.OPENSCENE:
@@ -2080,6 +2024,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 ret_dict['valid_label'] = np.ones_like(instance_labels)
             
             intruction = anno['question']
+            
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             # ret_dict['answers'] = answers
@@ -2108,18 +2055,20 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             click_query = np.zeros((1, 3))
             click_mask = np.zeros((1,))
             box_mask = np.zeros((1,))
+            box_query = np.zeros((features.shape[-1],))
             
             # TokenMask Implementation
             valid_label = np.zeros_like(instance_labels)
             valid_label[instance_labels == instance_id] = 1
             points, colors, valid_label, features = self.down_sample(points, colors, valid_label, features, npoint=self._npoint)
-            points = self.pc_norm(points)
+            # points = self.pc_norm(points)
             
-            if random.random() < 0.5:
+            if random.random() < 0.5 or self.config.subset == 'val':
                 click_query[0] = random.choice(points[valid_label == 1])
                 click_mask[0] = 1
             else:
                 box_mask[0] = 1
+                box_query = features[valid_label==1].mean(0)
             
             # object_points = points[instance_labels == instance_id]
             # object_colors = colors[instance_labels == instance_id]
@@ -2143,14 +2092,13 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 'episode_id': data['episode_id'],
                 'click_query': click_query.astype(np.float32),
                 'click_mask': click_mask.astype(np.float32),
-                'box_mask': box_mask.astype(np.float32)
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
             }
             
             if self.OPENSCENE:
                 ret_dict['features'] = _padding_pointcloud(features)
                 ret_dict['valid_label'] = valid_label
-            
-            # intruction = random.choice(TASK_PROMPT[task_name])
             
             object_points = points[valid_label == 1] 
             center, whl = self.convert_pc_to_box(object_points)
@@ -2182,6 +2130,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 prompt = deepcopy(TASK_PROMPT[task_name][0])
             
             intruction = prompt['instruction']
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
             # ret_dict['question'] = intruction
@@ -2190,7 +2140,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
 
             # answers = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
             caption = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
+            
             answers = prompt['answer'].format(locations=boxes, caption=caption)
+
             # ret_dict['answers'] = answers
             llm_inputs = self.tokenizer.batch_encode_plus(
             [' '.join((intruction, answers, self.tokenizer.eos_token))],
@@ -2204,7 +2156,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             return ret_dict
         
-        elif task_name == 'object_grouding' or task_name == 'object_caption_given_bbox':
+        """ elif task_name == 'object_grouding' or task_name == 'object_caption_given_bbox':
             tgt_id = int(anno['target_id']) if 'target_id' in anno else int(anno['object_id'])
             
             if not self.OPENSCENE:
@@ -2294,5 +2246,5 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
-            return ret_dict
+            return ret_dict """
             

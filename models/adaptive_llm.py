@@ -67,6 +67,7 @@ class OpensceneEncoder(nn.Module):
             scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds)
             ## Drop xyz
             valid_neighborhood = scene_neighborhood[... , -1]
+            neighborhood_xyz = scene_neighborhood[... , :3]
             scene_fts = scene_neighborhood[... , 3:-1].mean(-2)
             all_fts[scene_idx] = scene_fts
             all_fts_mask[scene_idx] = (valid_neighborhood.sum(-1) > 0).float()
@@ -87,7 +88,7 @@ class OpensceneEncoder(nn.Module):
         #     for id in region_idx:
         #         all_fts_mask[id, -region_token_num:] = 1
         
-        return all_fts, all_fts_mask, scene_center, valid_neighborhood
+        return all_fts, all_fts_mask, scene_center, neighborhood_xyz
         
         
 
@@ -102,6 +103,16 @@ class AdaptiveLLM(nn.Module):
         self.logger = get_logger(args.log_name)
         self.args = args
         
+        self.FLEX = hasattr(self._encoder_config, 'FLEX')
+        self._llm_config.FLEX = self.FLEX
+        self._llm_config.DENSE_TOKEN_NUM = self._encoder_config.DENSE_TOKEN_NUM if hasattr(self._encoder_config, 'DENSE_TOKEN_NUM') else None
+        self._llm_config.DENSE_TOKEN_SELECT_THRESHOLD = self._encoder_config.DENSE_TOKEN_SELECT_THRESHOLD if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_THRESHOLD') else None
+        self._llm_config.DENSE_TOKEN_SELECT_TOPK = self._encoder_config.DENSE_TOKEN_SELECT_TOPK if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_TOPK') else None
+        
+        model_path = 'ckpts/Llama-2-7b-hf'
+        if hasattr(self._encoder_config,"LLAVA"):
+            model_path = 'ckpts/llava-v1.5-7b'
+            print_log("Using LLAVA Finetune")
         # For debug in 3090
         if encoder_config.quantization:
             print_log("Quantization is enabled")
@@ -111,14 +122,14 @@ class AdaptiveLLM(nn.Module):
                 bnb_4bit_quant_type="nf4",            
                 bnb_4bit_compute_dtype=self.dtype      
             )
-            self.llm = LlamaForCausalLM.from_pretrained('ckpts/Llama-2-7b-hf', 
+            self.llm = LlamaForCausalLM.from_pretrained(model_path, 
                                                         config=self._llm_config, 
                                                         torch_dtype=self.dtype, 
                                                         low_cpu_mem_usage=True,
                                                         quantization_config=bnb_config,
                                                         )
         else:
-            self.llm = LlamaForCausalLM.from_pretrained('ckpts/Llama-2-7b-hf', 
+            self.llm = LlamaForCausalLM.from_pretrained(model_path, 
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
                                             )
@@ -132,13 +143,13 @@ class AdaptiveLLM(nn.Module):
             self.encoder = OpensceneEncoder(self._encoder_config)
         
         # Expand LLM vocalubary when finetune as there are grouding data
-        special_tokens = ['<obj>', '</obj>']
-        xyz_prompt = '<loc{}>'
-        for i in range(255):
-            special_tokens.append(xyz_prompt.format(i))
-        whl_prompt = '<whl{}>'
-        for i in range(255):
-            special_tokens.append(whl_prompt.format(i))
+        special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
+        # xyz_prompt = '<loc{}>'
+        # for i in range(255):
+        #     special_tokens.append(xyz_prompt.format(i))
+        # whl_prompt = '<whl{}>'
+        # for i in range(255):
+        #     special_tokens.append(whl_prompt.format(i))
         self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
         self.llm.resize_token_embeddings(len(self.tokenizer))
         
@@ -175,6 +186,68 @@ class AdaptiveLLM(nn.Module):
             nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
         )
 
+    def _fps(self, points, number):
+        '''
+            data B N 3
+            number int
+        '''
+        fps_idx = pointnet2_utils.furthest_point_sample(points.contiguous(), number) 
+        points = pointnet2_utils.gather_operation(points.transpose(1, 2).contiguous(), fps_idx).transpose(1,2).contiguous()
+        return points
+    
+    def _get_dense_pointclouds_feature_corpus(self, data_dict, center, neighborhood_xyz):
+        '''
+            neighborhood_xyz: [bs, 128, 384, 3]
+        '''
+        N = 100000
+        # Extract {TOKEN_NUM} dense tokens per token
+        TOKEN_NUM = self._llm_config.DENSE_TOKEN_NUM
+        bs = neighborhood_xyz.shape[0]
+        # Get dense token center in neighborhood [bs, 128, 4, 3]
+        dense_token_center = self._fps(neighborhood_xyz.view(-1, neighborhood_xyz.shape[-2], neighborhood_xyz.shape[-1]), TOKEN_NUM).view(bs, -1, TOKEN_NUM, 3)
+        
+        tokenizer = Group(num_group=dense_token_center.shape[-3]*dense_token_center.shape[-2], group_size=neighborhood_xyz.shape[-2])
+        
+        scan_names = data_dict['scan_name']
+        dataset_names = data_dict['dataset_name']
+        batch_points = []
+        batch_features = []
+        for sn, dn in zip(scan_names, dataset_names):
+            features_root = 'data/SceneVerse/OpenScene_Scan_Features/{}/{}.pth'.format(dn, sn)
+            dict = torch.load(features_root, map_location='cpu')
+            points = dict['points'].numpy().astype(np.float32)
+            # colors = dict['colors'].numpy().astype(np.float32)
+            features = dict['features'].numpy().astype(np.float32)
+            # points, features = self._fps(points, features, N)
+            idxs = np.random.choice(len(points), size=N, replace=len(points) < N)
+            batch_points.append(torch.from_numpy(points[idxs]).to(data_dict['points'].device))
+            batch_features.append(torch.from_numpy(features[idxs]).to(data_dict['points'].device))
+            
+        dense_points = torch.stack(batch_points, dim=0)
+        dense_features = torch.stack(batch_features, dim=0)
+        
+        dense_scene_pointclouds = torch.cat([dense_points, dense_features], dim=-1).contiguous()
+        ## batch_size, num_group, group_size, 768
+        dense_neighborhood, dense_center = tokenizer(dense_scene_pointclouds)
+
+        # [bs, 128*TOKEN_NUM, 384, 768]
+        dense_fts = dense_neighborhood[... , 3:].mean(-2)
+        
+        point_cloud_dims_min, _ = dense_points[..., :3].min(dim=1)
+        point_cloud_dims_max, _ = dense_points[..., :3].max(dim=1)
+        point_cloud_dims = [
+            point_cloud_dims_min,
+            point_cloud_dims_max,
+        ]
+        pos_embed = self.pos_emb3d(dense_center, input_range=point_cloud_dims)
+        pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
+        dense_fts = self.encoder_to_llm_projection(dense_fts + pos_embed).to(self.dtype) 
+        
+        return {
+            # 'dense_points':torch.stack(batch_points, dim=0), 
+            'dense_features':dense_fts.view(bs, -1, TOKEN_NUM, self._llm_config.hidden_size)
+        }
+        
     def wrap_model(self):
         if self._encoder_config.distributed == 'DDP':
             return self.wrap_ddp()
@@ -329,25 +402,15 @@ class AdaptiveLLM(nn.Module):
                 vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
                 vision_mask = torch.ones_like(vision_embed[..., 0])
             else:
-                vision_embed, vision_mask, center, valid_neighborhood = self.encoder(points, data_dict['features'], level, data_dict['valid_label'])
+                vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, data_dict['features'], level, data_dict['valid_label'])
                 
-                # Visual prompt code
-                batch_size = vision_embed.shape[0]
-                # Generate box and click prompt
-                box_prompt = []
-                box_mask = data_dict['box_mask']
-                click_prompt = data_dict['click_query']
-                click_mask = data_dict['click_mask']
-                
-                for vi, (neighbor, mask) in enumerate(zip(valid_neighborhood, vision_mask)):
-                    # Donot need visual prompt for scene understanding
-                    if mask.sum() == len(mask):
-                        box_prompt.append(torch.zeros((1, 1, self._encoder_config.trans_dim), device=vision_embed.device))
-                    else:
-                        idx = neighbor.sum(dim=-1).argmax(dim=-1)
-                        box_prompt.append(vision_embed[vi][idx].unsqueeze(0).unsqueeze(0))
-                box_prompt = torch.cat(box_prompt, dim=0)
-                
+        # Visual prompt code
+        batch_size = vision_embed.shape[0]
+        # # Generate box and click prompt
+        box_mask = data_dict['box_mask']
+        click_prompt = data_dict['click_query']
+        click_mask = data_dict['click_mask']
+        box_prompt = data_dict['box_query'].unsqueeze(1)
         visual_prompt = [torch.zeros(batch_size, 0, self._llm_config.hidden_size).to(vision_embed.device)]
         visual_mask = [torch.zeros(batch_size, 0).to(vision_embed.device)]
         box_prompt = self.box_prompt_projector(box_prompt)
@@ -380,8 +443,9 @@ class AdaptiveLLM(nn.Module):
         vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
         vision_mask = torch.ones_like(vision_embed[..., 0], device=vision_embed.device)
         
-        vision_embed = torch.cat((vision_embed, prompt_feature), dim=1)
-        vision_mask = torch.cat((vision_mask, prompt_mask), dim=1)
+        # W/o system prompt version
+        # vision_embed = torch.cat((vision_embed, prompt_feature), dim=1)
+        # vision_mask = torch.cat((vision_mask, prompt_mask), dim=1)
         
         # Token mask version 
         # vision_embed = vision_embed + self.xyz_projection(center)
@@ -389,6 +453,11 @@ class AdaptiveLLM(nn.Module):
         
         # assert not torch.isnan(vision_embed).any()
         # assert not torch.isinf(vision_embed).any()
+        
+        if self.FLEX:
+            dense_pointclouds_feature_corpus = self._get_dense_pointclouds_feature_corpus(data_dict, center, neighborhood_xyz)
+            data_dict['dense_pointclouds_feature_corpus'] = dense_pointclouds_feature_corpus
+        
         if not eval:
             
             input_mask = data_dict['attention_mask']
@@ -407,14 +476,18 @@ class AdaptiveLLM(nn.Module):
             outputs = self.llm(
                 vision_embeds=vision_embed.to(self.dtype),
                 vision_mask=vision_mask.to(self.dtype),
+                visual_prompt_embeds=prompt_feature.to(self.dtype),
+                visual_prompt_mask=prompt_mask.to(self.dtype),
                 input_ids=input_ids,
                 attention_mask=input_mask.to(self.dtype),
-                output_attentions=True,
+                tokenizer = self.tokenizer,
+                output_attentions=False,
+                dense_pointclouds_feature_corpus=data_dict.get('dense_pointclouds_feature_corpus', None),
             )
             
             gradient_mask = data_dict['gradient_mask']
             loss = self._loss_caption(
-                logits = outputs.logits[:, vision_embed.shape[1] - 1: -1],
+                logits = outputs.logits[:, -(gradient_mask.shape[1]+1): -1],
                 target = input_ids,
                 mask = gradient_mask.to(self.dtype),
             )
@@ -460,6 +533,9 @@ class AdaptiveLLM(nn.Module):
                     vision_mask=vision_mask[batch_id].unsqueeze(0).to(self.dtype),
                     input_ids=sample_instruction[sample_mask == 1].unsqueeze(0),
                     attention_mask=torch.ones_like(sample_instruction[sample_mask == 1].unsqueeze(0)).to(self.dtype),
+                    visual_prompt_embeds=prompt_feature[batch_id].unsqueeze(0).to(self.dtype),
+                    visual_prompt_mask=prompt_mask[batch_id].unsqueeze(0).to(self.dtype),
+                    tokenizer = self.tokenizer,
                     max_length=128,   
                     **caption_config,
                 )

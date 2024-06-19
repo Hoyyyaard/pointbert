@@ -86,9 +86,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
     # build model
     llm_config  = AutoConfig.from_pretrained('ckpts/Llama-2-7b-hf/config.json')
     base_model = AdaptiveLLM(llm_config, config.model, finetune=finetune, logger=logger, args=args)
-
-    # from IPython import embed; embed()
-    
+   
     if not finetune:
         for n, p in base_model.llm.named_parameters():
             p.requires_grad = False

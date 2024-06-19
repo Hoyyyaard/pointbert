@@ -20,7 +20,7 @@
 """ PyTorch LLaMA model."""
 import math
 from typing import List, Optional, Tuple, Union
-
+import os
 import torch
 import torch.utils.checkpoint
 from torch import nn
@@ -158,8 +158,9 @@ class LlamaMLP(nn.Module):
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LlamaConfig, layer_idx: Optional[int] = None):
         super().__init__()
+        self.layer_idx = layer_idx
         self.config = config
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -176,6 +177,13 @@ class LlamaAttention(nn.Module):
         self.v_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
         self.rotary_emb = LlamaRotaryEmbedding(self.head_dim, max_position_embeddings=self.max_position_embeddings)
+        
+        # Flex
+        if self.config.FLEX and layer_idx >= 8:
+            if int(os.environ["RANK"]) == 0:
+                print(f"Flex enabled for layer {layer_idx}")
+            self.k_proj_hd = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
+            self.v_proj_hd = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -188,6 +196,8 @@ class LlamaAttention(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        dense_pointclouds_feature_corpus = None,
+        last_select_mask_list = []
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -209,27 +219,77 @@ class LlamaAttention(nn.Module):
 
         past_key_value = (key_states, value_states) if use_cache else None
 
+        # Flex attention here
+        has_hd_features = self.config.FLEX and dense_pointclouds_feature_corpus is not None
+        need_to_concat_hd_feature = self.layer_idx > 8 and has_hd_features
+        need_to_get_hd_feature_mask = self.layer_idx >= 8 and has_hd_features
+        if need_to_concat_hd_feature:
+            # [bsz, 128*4, 4096]
+            # DENSE_TOKEN_NUM = dense_pointclouds_feature_corpus['dense_features'].shape[-2]
+            hd_features = dense_pointclouds_feature_corpus['dense_features'].view(bsz, -1, self.hidden_size)
+            # FIXME
+            hd_cos = 0
+            hd_sin = 0
+            key_hd_features = self.k_proj_hd(hd_features)
+            value_hd_features = self.v_proj_hd(hd_features)
+            key_hd_features = key_hd_features.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+            value_hd_features = value_hd_features.view(bsz, -1, self.num_heads, self.head_dim).transpose(1, 2)
+            # k_embed = (k * cos) + (rotate_half(k) * sin)
+            key_hd_features = (key_hd_features * hd_cos) + (rotate_half(key_hd_features) * hd_sin)
+            key_states = torch.cat([key_states, key_hd_features], dim=2)
+            value_states = torch.cat([value_states, value_hd_features], dim=2)
+
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
-        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-            raise ValueError(
-                f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                f" {attn_weights.size()}"
-            )
+        # if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
+        #     raise ValueError(
+        #         f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
+        #         f" {attn_weights.size()}"
+        #     )
 
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
                 raise ValueError(
                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                 )
-            attn_weights = attn_weights + attention_mask
+            
+            if need_to_concat_hd_feature:
+                # [bsz, 1 , seq_len, 512]
+                empty_mask_for_hd_features = torch.ones(attention_mask.shape[0], attention_mask.shape[1], attention_mask.shape[2], hd_features.shape[1], device=attention_mask.device, dtype=attention_mask.dtype) * torch.finfo(attn_weights.dtype).min
+                # if not self.training:
+                #     select_mask_for_hd_features = torch.zeros(1, 1, 1, hd_features.shape[1], device=attention_mask.device, dtype=attention_mask.dtype)
+                # else:
+                select_mask_for_hd_features = empty_mask_for_hd_features.clone()
+                for ib in range(hd_features.shape[0]):
+                    select_mask_for_hd_features[ib, 0][last_select_mask_list[ib]] = 0.0
+                # if self.training:
+                attention_mask_select = torch.cat([attention_mask, select_mask_for_hd_features], dim=3)
+                attn_weights_select = attn_weights + attention_mask_select
+                # else:
+                #     attention_mask_select = torch.cat([attention_mask[:, :, -1:], select_mask_for_hd_features], dim=3)
+                #     attn_weights_select = attn_weights[:, :, -1:] + attention_mask_select
+                attention_mask_empty = torch.cat([attention_mask, empty_mask_for_hd_features], dim=3)
+                attn_weights = attn_weights + attention_mask_empty
+                
+                attn_weights_select = torch.max(
+                    attn_weights_select, torch.tensor(torch.finfo(attn_weights_select.dtype).min, device=attn_weights_select.device)
+                )
+                
+            else:
+                attn_weights = attn_weights + attention_mask
+                
             attn_weights = torch.max(
                 attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min, device=attn_weights.device)
             )
-
+            
         # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
+        if need_to_concat_hd_feature:
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_weights_select = nn.functional.softmax(attn_weights_select, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_output = torch.matmul(attn_weights_select, value_states)
+        else:
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -242,17 +302,43 @@ class LlamaAttention(nn.Module):
 
         attn_output = self.o_proj(attn_output)
 
+        select_mask_list = []
+        if need_to_get_hd_feature_mask:
+            threshold = self.config.DENSE_TOKEN_SELECT_THRESHOLD
+            topk = self.config.DENSE_TOKEN_SELECT_TOPK
+            select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+            # Mean in head dimension: [bsz, seq_len, seq_len]
+            global_attention_weight = torch.mean(attn_weights, dim=1)
+            # len(system_prompt) + <scene> + 128 + </scene> + len(visual_prompt) + len(instruction)
+            prefix_len = self.config.scene_token_start_index
+            text_start_idx = prefix_len+128+1
+            scene_token_attention_weight = global_attention_weight[:, text_start_idx:, :][:, :, prefix_len:prefix_len+128]
+            # scene_token_attention_weight = nn.functional.softmax(scene_token_attention_weight, dim=-1)
+            # Get topk index
+            topk_index = torch.topk(scene_token_attention_weight, topk, dim=-1)[1]
+            for bi in range(topk_index.shape[0]):
+                # As padding tokens will not deal with the flex attention
+                valid_seq_end_idx = sum(attention_mask[bi][0][-1] == 0).item()
+                for seq_id in range(valid_seq_end_idx-text_start_idx):
+                    for tidx in topk_index[bi][seq_id]:
+                        dense_token_start_idx = tidx * self.config.DENSE_TOKEN_NUM
+                        select_mask[seq_id + text_start_idx][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
+                select_mask_list.append(select_mask.long())
+        
+        # Drop hd weight in attention weights
+        if need_to_concat_hd_feature:
+            attn_weights = attn_weights[:, :, :-hd_features.shape[1]]
         if not output_attentions:
             attn_weights = None
 
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_value, select_mask_list
 
 
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LlamaConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.self_attn = LlamaAttention(config=config)
+        self.self_attn = LlamaAttention(config=config, layer_idx=layer_idx)
         self.mlp = LlamaMLP(
             hidden_size=self.hidden_size,
             intermediate_size=config.intermediate_size,
@@ -269,6 +355,8 @@ class LlamaDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
+        dense_pointclouds_feature_corpus = None,
+        last_select_mask_list: Optional[List] = [],
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -289,14 +377,25 @@ class LlamaDecoderLayer(nn.Module):
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
+        self_attn_outputs = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
             output_attentions=output_attentions,
             use_cache=use_cache,
+            dense_pointclouds_feature_corpus=dense_pointclouds_feature_corpus,
+            last_select_mask_list=last_select_mask_list,
         )
+        
+        if len(self_attn_outputs) == 3:
+            hidden_states, self_attn_weights, present_key_value = self_attn_outputs
+            select_mask_list = []
+        elif len(self_attn_outputs) == 4:
+            hidden_states, self_attn_weights, present_key_value, select_mask_list = self_attn_outputs
+        else:
+            raise NotImplementedError
+        
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -313,6 +412,7 @@ class LlamaDecoderLayer(nn.Module):
         if use_cache:
             outputs += (present_key_value,)
 
+        outputs += (select_mask_list,)
         return outputs
 
 
@@ -443,7 +543,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList([LlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
@@ -492,6 +592,7 @@ class LlamaModel(LlamaPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        dense_pointclouds_feature_corpus = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -552,6 +653,7 @@ class LlamaModel(LlamaPreTrainedModel):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = () if use_cache else None
 
+        select_mask_list = []
         for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -563,7 +665,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
                         # None for past_key_value
-                        return module(*inputs, output_attentions, None)
+                        return module(*inputs)
 
                     return custom_forward
 
@@ -572,7 +674,11 @@ class LlamaModel(LlamaPreTrainedModel):
                     hidden_states,
                     attention_mask,
                     position_ids,
-                    None,
+                    past_key_values,
+                    output_attentions,
+                    use_cache,
+                    dense_pointclouds_feature_corpus,
+                    select_mask_list
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -582,9 +688,12 @@ class LlamaModel(LlamaPreTrainedModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    dense_pointclouds_feature_corpus=dense_pointclouds_feature_corpus,
+                    last_select_mask_list=select_mask_list
                 )
 
             hidden_states = layer_outputs[0]
+            select_mask_list = layer_outputs[-1]
 
             if use_cache:
                 next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
@@ -637,12 +746,46 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
     def get_decoder(self):
         return self.model
 
+    def _replace_placehold_to_embeddings(self, visual_prompt_embeds, visual_prompt_mask, vision_embeds, vision_mask, input_ids, input_mask, tokenizer):
+        
+        # Scene embeddings: <scene_placehold>
+        # Prompt embeddings: <vp_placehold>
+        scene_tokens = tokenizer.tokenize('<scene_placehold>')
+        scene_token_ids = tokenizer.convert_tokens_to_ids(scene_tokens)[0]
+        vp_tokens = tokenizer.tokenize('<vp_placehold>')
+        vp_token_ids = tokenizer.convert_tokens_to_ids(vp_tokens)[0]
+        
+        # As all placehold index will be the same, we can just take the first one
+        placeholder_idx = [torch.where(input_ids == scene_token_ids)[1][0], torch.where(input_ids == vp_token_ids)[1][0]]
+        
+        embedding_layer = self.get_input_embeddings()
+        
+        # Replace scene placeholder with scene embeddings
+        new_inputs_embeds = torch.cat((embedding_layer(input_ids[:, :placeholder_idx[0]]), 
+                                    vision_embeds, 
+                                    embedding_layer(input_ids[:, placeholder_idx[0]+1: placeholder_idx[1]]),
+                                    visual_prompt_embeds,
+                                    embedding_layer(input_ids[:, placeholder_idx[1]+1:])), dim=1)
+                                    
+        new_inputs_mask = torch.cat((input_mask[:, :placeholder_idx[0]],
+                                    vision_mask,
+                                    input_mask[:, placeholder_idx[0]+1: placeholder_idx[1]],
+                                    visual_prompt_mask,
+                                    input_mask[:, placeholder_idx[1]+1:]), dim=1)
+        
+        self.config.scene_token_start_index = placeholder_idx[0].item()
+        
+        return new_inputs_embeds, new_inputs_mask
+    
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
         vision_embeds: torch.FloatTensor = None,
         vision_mask: torch.FloatTensor = None,
+        visual_prompt_embeds: torch.FloatTensor = None,
+        visual_prompt_mask: torch.FloatTensor = None,
+        tokenizer=None,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -653,6 +796,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        dense_pointclouds_feature_corpus = None
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -681,16 +825,22 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         ```"""
 
         if not vision_embeds is None:
-            embedding_layer = self.get_input_embeddings()
-            input_mask = attention_mask
+            input_mask = attention_mask if not attention_mask is None else torch.ones_like(input_ids, device=input_ids.device)
             input_ids = input_ids
             
-            inputs_embeds = torch.cat((vision_embeds, embedding_layer(input_ids)), dim=1)
-            attention_mask = torch.cat((vision_mask, input_mask), dim=1)
+            inputs_embeds, attention_mask = self._replace_placehold_to_embeddings(visual_prompt_embeds, 
+                                                                                visual_prompt_mask,
+                                                                                vision_embeds, 
+                                                                                vision_mask,
+                                                                                input_ids, 
+                                                                                input_mask, 
+                                                                                tokenizer)
+            
+            # W/o system prompt version
+            # inputs_embeds = torch.cat((vision_embeds, embedding_layer(input_ids)), dim=1)
+            # attention_mask = torch.cat((vision_mask, input_mask), dim=1)
+            
             input_ids = None
-
-        # if torch.isnan(inputs_embeds).any():
-        #     a = 1
         
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -709,6 +859,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            dense_pointclouds_feature_corpus=dense_pointclouds_feature_corpus,
         )
 
         hidden_states = outputs[0]

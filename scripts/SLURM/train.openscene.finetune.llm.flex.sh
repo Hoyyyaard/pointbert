@@ -55,6 +55,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --sync_bn \
-    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene.yaml \
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-FLEX.yaml \
     --exp_name Exp0021_0619_LL3daData_GivenXYZ_AddLL3DAPos_SystemPrompt_FP32_SyBN_From[Scratch] \
     --resume

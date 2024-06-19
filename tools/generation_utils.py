@@ -36,6 +36,9 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
             attention_mask=attention_mask,
             vision_embeds=vision_embeds,
             vision_mask=vision_mask,
+            visual_prompt_embeds=kwargs['visual_prompt_embeds'],
+            visual_prompt_mask=kwargs['visual_prompt_mask'],
+            tokenizer=kwargs['tokenizer'],
             output_attentions=True,
         )
         
