@@ -23,7 +23,7 @@ model : {
 
   DTYPE: FP32,
   distributed: FSDP,  # DDP, FSDP
-  quantization: True, 
+  quantization: False, 
 
   FLEX: True,
   DENSE_TOKEN_NUM: 4,

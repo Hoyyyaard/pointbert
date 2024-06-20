@@ -9,6 +9,14 @@ from tools.generation_utils import generation
 from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
 from models.dvae import Group
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import (
+    enable_wrap,
+    transformer_auto_wrap_policy,
+    wrap,
+)
+import functools
+from models.modeling_llama import LlamaDecoderLayer
 import numpy as np
 import os 
 from utils.logger import *
@@ -32,66 +40,29 @@ class OpensceneEncoder(nn.Module):
         self.region_npoints = self.encoder_config.REGION_N_POINTS
         self.instance_npoints = self.encoder_config.INSTANCE_N_POINTS
         
-    def forward(self, xyzs, pointcloud_features, level, valid_labels=None):
+    def forward(self, xyzs, pointcloud_features, level):
         B, _, dim = pointcloud_features.shape
         max_token_num = self.level_group_map['scene'][0]
-        region_token_num = self.level_group_map['region'][0]
-        instance_token_num = self.level_group_map['instance'][0]
         all_fts = torch.zeros((B, max_token_num, dim), device=pointcloud_features.device, dtype=pointcloud_features.dtype)
-        all_fts_mask = torch.zeros((B, max_token_num), device=pointcloud_features.device, dtype=pointcloud_features.dtype)
-        
-        # Different level data has different number of groups
-        # We process them seperately
-        instance_idx = [li for li,l in enumerate(level) if l=='instance']
-        region_idx = [li for li,l in enumerate(level) if l=='region']
+        all_fts_mask = torch.ones((B, max_token_num), device=pointcloud_features.device, dtype=pointcloud_features.dtype)
         scene_idx = [li for li,l in enumerate(level) if l=='scene']
-        
-        # if len(instance_idx) > 0:
-        #     # For instance level we only need to avg pooling the features
-        #     instance_fts = pointcloud_features[instance_idx][:, :self.instance_npoints, :]
-        #     instance_fts = instance_fts.mean(1).unsqueeze(1)
-        #     ## Padding
-        #     padding_instance_embed = torch.zeros((instance_fts.shape[0], max_token_num-instance_token_num, instance_fts.shape[-1]), device=instance_fts.device)
-        #     instance_fts = torch.cat([padding_instance_embed, instance_fts], dim=1)
-        #     all_fts[instance_idx] = instance_fts
-        #     for id in instance_idx:
-        #         all_fts_mask[id, -instance_token_num:] = 1
-        
-        # For region and scene level we need to group and gather the features
         if len(scene_idx) > 0:
             self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['scene']
             scene_fts = pointcloud_features[scene_idx][:, :self.scene_npoints, :]
             xyz = xyzs[scene_idx][:, :self.scene_npoints, :]
-            scene_pointclouds = torch.cat([xyz, scene_fts, valid_labels.unsqueeze(-1)], dim=-1).contiguous()
+            scene_pointclouds = torch.cat([xyz, scene_fts], dim=-1).contiguous()
             ## batch_size, num_group, group_size, 768
             scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds)
             ## Drop xyz
-            valid_neighborhood = scene_neighborhood[... , -1]
             neighborhood_xyz = scene_neighborhood[... , :3]
-            scene_fts = scene_neighborhood[... , 3:-1].mean(-2)
+            scene_fts = scene_neighborhood[... , 3:].mean(-2)
             all_fts[scene_idx] = scene_fts
-            all_fts_mask[scene_idx] = (valid_neighborhood.sum(-1) > 0).float()
-        
-        # if len(region_idx) > 0:
-        #     self.pointcloud_tokenizer.num_group, self.pointcloud_tokenizer.group_size = self.level_group_map['region']
-        #     region_fts = pointcloud_features[region_idx][:, :self.region_npoints, :]
-        #     xyz = xyzs[region_idx][:, :self.region_npoints, :]
-        #     region_pointclouds = torch.cat([xyz, region_fts], dim=-1)
-        #     ## batch_size, num_group, group_size, 768
-        #     region_neighborhood, region_center = self.pointcloud_tokenizer(region_pointclouds)
-        #     ## Dop xyz
-        #     region_fts = region_neighborhood[... , 3:].mean(-2)
-        #     ## Padding
-        #     padding_region_embed = torch.zeros((region_fts.shape[0], max_token_num-region_token_num, region_fts.shape[-1]), device=region_fts.device)
-        #     region_fts = torch.cat([padding_region_embed, region_fts], dim=1)
-        #     all_fts[region_idx] = region_fts
-        #     for id in region_idx:
-        #         all_fts_mask[id, -region_token_num:] = 1
+        else:
+            assert False
         
         return all_fts, all_fts_mask, scene_center, neighborhood_xyz
         
         
-
 class AdaptiveLLM(nn.Module):
     def __init__(self, llm_config, encoder_config, finetune=False, logger=None, args=None):
         super(AdaptiveLLM, self).__init__()
@@ -113,6 +84,7 @@ class AdaptiveLLM(nn.Module):
         if hasattr(self._encoder_config,"LLAVA"):
             model_path = 'ckpts/llava-v1.5-7b'
             print_log("Using LLAVA Finetune")
+            
         # For debug in 3090
         if encoder_config.quantization:
             print_log("Quantization is enabled")
@@ -133,9 +105,10 @@ class AdaptiveLLM(nn.Module):
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
                                             )
-            self.llm.model.gradient_checkpointing_enable()
-            self.llm.model.gradient_checkpointing = True
-            print_log("Gradient checkpointing is enabled", logger=self.logger)
+            if not self.FLEX:
+                self.llm.model.gradient_checkpointing_enable()
+                self.llm.model.gradient_checkpointing = True
+                print_log("Gradient checkpointing is enabled", logger=self.logger)
         
         if not self.OPENSCENE:
             self.encoder = PointTransformer(self._encoder_config)
@@ -195,36 +168,20 @@ class AdaptiveLLM(nn.Module):
         points = pointnet2_utils.gather_operation(points.transpose(1, 2).contiguous(), fps_idx).transpose(1,2).contiguous()
         return points
     
-    def _get_dense_pointclouds_feature_corpus(self, data_dict, center, neighborhood_xyz):
+    def _get_hd_corpus(self, data_dict, center, neighborhood_xyz):
         '''
             neighborhood_xyz: [bs, 128, 384, 3]
         '''
-        N = 100000
         # Extract {TOKEN_NUM} dense tokens per token
         TOKEN_NUM = self._llm_config.DENSE_TOKEN_NUM
         bs = neighborhood_xyz.shape[0]
         # Get dense token center in neighborhood [bs, 128, 4, 3]
         dense_token_center = self._fps(neighborhood_xyz.view(-1, neighborhood_xyz.shape[-2], neighborhood_xyz.shape[-1]), TOKEN_NUM).view(bs, -1, TOKEN_NUM, 3)
-        
+
         tokenizer = Group(num_group=dense_token_center.shape[-3]*dense_token_center.shape[-2], group_size=neighborhood_xyz.shape[-2])
         
-        scan_names = data_dict['scan_name']
-        dataset_names = data_dict['dataset_name']
-        batch_points = []
-        batch_features = []
-        for sn, dn in zip(scan_names, dataset_names):
-            features_root = 'data/SceneVerse/OpenScene_Scan_Features/{}/{}.pth'.format(dn, sn)
-            dict = torch.load(features_root, map_location='cpu')
-            points = dict['points'].numpy().astype(np.float32)
-            # colors = dict['colors'].numpy().astype(np.float32)
-            features = dict['features'].numpy().astype(np.float32)
-            # points, features = self._fps(points, features, N)
-            idxs = np.random.choice(len(points), size=N, replace=len(points) < N)
-            batch_points.append(torch.from_numpy(points[idxs]).to(data_dict['points'].device))
-            batch_features.append(torch.from_numpy(features[idxs]).to(data_dict['points'].device))
-            
-        dense_points = torch.stack(batch_points, dim=0)
-        dense_features = torch.stack(batch_features, dim=0)
+        dense_points = data_dict['hd_points']
+        dense_features = data_dict['hd_features']
         
         dense_scene_pointclouds = torch.cat([dense_points, dense_features], dim=-1).contiguous()
         ## batch_size, num_group, group_size, 768
@@ -239,13 +196,12 @@ class AdaptiveLLM(nn.Module):
             point_cloud_dims_min,
             point_cloud_dims_max,
         ]
-        pos_embed = self.pos_emb3d(dense_center, input_range=point_cloud_dims)
-        pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
-        dense_fts = self.encoder_to_llm_projection(dense_fts + pos_embed).to(self.dtype) 
         
         return {
-            # 'dense_points':torch.stack(batch_points, dim=0), 
-            'dense_features':dense_fts.view(bs, -1, TOKEN_NUM, self._llm_config.hidden_size)
+            # 'dense_points':dense_points, 
+            'dense_center':dense_center,
+            'point_cloud_dims': point_cloud_dims,
+            'dense_features':dense_fts.view(bs, -1, TOKEN_NUM, self._encoder_config.trans_dim).contiguous()
         }
         
     def wrap_model(self):
@@ -257,14 +213,6 @@ class AdaptiveLLM(nn.Module):
             assert False
     
     def wrap_fsdp(self):
-        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        from torch.distributed.fsdp.wrap import (
-            enable_wrap,
-            transformer_auto_wrap_policy,
-            wrap,
-        )
-        import functools
-        from models.modeling_llama import LlamaDecoderLayer
         llama_auto_wrap_policy = functools.partial(
             transformer_auto_wrap_policy,
             transformer_layer_cls={
@@ -388,21 +336,9 @@ class AdaptiveLLM(nn.Module):
         with torch.no_grad():
                     
             points = data_dict['points']
-            # num_group = data_dict['num_groups'][0].item()
-            # group_size = data_dict['group_size'][0].item()
-            
-            num_group = data_dict['num_groups']
-            group_size = data_dict['group_size']
             level = data_dict['level']
-            
-            if not self.OPENSCENE:
-                cls_tokens, encoder_tokens, center = self.encoder(points, num_group=num_group, group_size=group_size, level=level, forward_llm=True)
-                # Concat cls_tokens and encoder_tokens
-                cls_tokens = cls_tokens.unsqueeze(1)
-                vision_embed = torch.cat((cls_tokens, encoder_tokens), dim=1)
-                vision_mask = torch.ones_like(vision_embed[..., 0])
-            else:
-                vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, data_dict['features'], level, data_dict['valid_label'])
+            features = data_dict['features']
+            vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, features, level)
                 
         # Visual prompt code
         batch_size = vision_embed.shape[0]
@@ -434,45 +370,37 @@ class AdaptiveLLM(nn.Module):
         ## concat box and click prompts as well as prompt masks
         prompt_feature = torch.cat(visual_prompt, dim=1)   # batch x (2 x ntoken) x channel
         prompt_mask = torch.cat(visual_mask, dim=1)        # batch x (2 x ntoken)
-                
-        # vision_embed.requires_grad_(True)
-        # center.requires_grad_(True)
-
-        pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
-        pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
-        vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
-        vision_mask = torch.ones_like(vision_embed[..., 0], device=vision_embed.device)
-        
-        # W/o system prompt version
-        # vision_embed = torch.cat((vision_embed, prompt_feature), dim=1)
-        # vision_mask = torch.cat((vision_mask, prompt_mask), dim=1)
-        
-        # Token mask version 
-        # vision_embed = vision_embed + self.xyz_projection(center)
-        # vision_embed = self.encoder_to_llm_projection(vision_embed)
-        
-        # assert not torch.isnan(vision_embed).any()
-        # assert not torch.isinf(vision_embed).any()
-        
+            
         if self.FLEX:
-            dense_pointclouds_feature_corpus = self._get_dense_pointclouds_feature_corpus(data_dict, center, neighborhood_xyz)
-            data_dict['dense_pointclouds_feature_corpus'] = dense_pointclouds_feature_corpus
+            hd_corpus = self._get_hd_corpus(data_dict, center, neighborhood_xyz)
+            hd_center = hd_corpus['dense_center']
+            hd_point_cloud_dims = hd_corpus['point_cloud_dims']
+            hd_vision_embed = hd_corpus['dense_features']
+            bsz, _, TN, dim = hd_vision_embed.shape
+            hd_vision_embed = hd_vision_embed.view(bsz, -1, dim).contiguous()
+            
+            hd_pos_embed = self.pos_emb3d(hd_center, input_range=hd_point_cloud_dims)
+            pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
+            all_pos_embed = torch.cat((pos_embed, hd_pos_embed), dim=-1)
+            all_pos_embed = self.xyz_projection(all_pos_embed.permute(0, 2, 1))
+            pos, hd_pos = all_pos_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
+            all_vision_embed = torch.cat((vision_embed+pos, hd_vision_embed+hd_pos), dim=1)
+            all_vision_embed = self.encoder_to_llm_projection(all_vision_embed)
+            vision_embed, hd_vision_embed = all_vision_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
+            hd_vision_embed = hd_vision_embed.to(self.dtype)
+            # Set hd corpus for self attention layer
+            for i in range(len(self.llm.model.layers)):
+                self.llm.model.layers[i].self_attn.hd_features = hd_vision_embed.view(bsz, -1, TN, self._llm_config.hidden_size).contiguous()
+                self.llm.model.layers[i].self_attn.step_ratio = data_dict['step_ratio']
+        else:
+            pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
+            pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
+            vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
         
         if not eval:
-            
             input_mask = data_dict['attention_mask']
             input_ids = data_dict['input_ids']
             
-            # ---- batch x (ntoken + nword) x n_embd
-            # inputs_embeds = torch.cat((vision_embed, embedding_layer(input_ids)), dim=1)
-            # attention_mask = torch.cat((vision_mask, input_mask), dim=1)
-            
-            # Calculate llm loss
-            # outputs = self.llm(
-            #     inputs_embeds=inputs_embeds.to(self.dtype),
-            #     attention_mask=attention_mask.to(self.dtype),
-            #     output_attentions=False,
-            # )
             outputs = self.llm(
                 vision_embeds=vision_embed.to(self.dtype),
                 vision_mask=vision_mask.to(self.dtype),
@@ -482,7 +410,6 @@ class AdaptiveLLM(nn.Module):
                 attention_mask=input_mask.to(self.dtype),
                 tokenizer = self.tokenizer,
                 output_attentions=False,
-                dense_pointclouds_feature_corpus=data_dict.get('dense_pointclouds_feature_corpus', None),
             )
             
             gradient_mask = data_dict['gradient_mask']
@@ -491,8 +418,6 @@ class AdaptiveLLM(nn.Module):
                 target = input_ids,
                 mask = gradient_mask.to(self.dtype),
             )
-            # assert not torch.isnan(outputs.logits).any()
-            # assert not torch.isnan(loss).any()
             return loss
         
         else:
@@ -514,19 +439,6 @@ class AdaptiveLLM(nn.Module):
                 sample_instruction = instruction[batch_id]     
                 sample_mask = instruction_mask[batch_id]     # ntoken
                 
-                # output = generation(
-                #     self.llm, 
-                #     inputs_embeds=torch.cat(
-                #         [
-                #             vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype),   # 1 x nprefix x n_embd
-                #             embedding_layer(sample_instruction[sample_mask == 1]).unsqueeze(0).to(self.dtype)
-                #         ],
-                #         dim=1
-                #     ),
-                #     max_length=128,
-                #     **caption_config,
-                # )
-                # vision_embed_per_batch = vision_embed[batch_id][vision_mask[batch_id] == 1].unsqueeze(0).to(self.dtype)
                 output = generation(
                     self.llm, 
                     vision_embeds=vision_embed[batch_id].unsqueeze(0).to(self.dtype),

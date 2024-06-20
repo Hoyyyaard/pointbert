@@ -56,6 +56,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm \
     --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-Openscene.yaml \
-    --exp_name PExp0003_0613_TokenMask_AddPos_DetPrompt_Equal61kOSRData_Sybn_From[Openscene] \
+    --exp_name PExp0006_0620_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_ALLOSRData_From[Openscene] \
     --resume
 

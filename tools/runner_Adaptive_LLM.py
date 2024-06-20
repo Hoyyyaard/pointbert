@@ -180,7 +180,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         curr_nan_times = 0
         epoch_tqdm = tqdm(total = config.max_epoch, desc = 'Epoch', position = 0)
         base_model.zero_grad()
-        
+        total_iter = config.max_epoch * len(train_dataloader)
         for epoch in range(start_epoch, config.max_epoch): 
         
             epoch_tqdm.update(1)
@@ -207,7 +207,6 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 num_iter += 1
                 n_itr = epoch * n_batches + idx
                 
-                
                 for k,v in data_dict.items():
                     if isinstance(v, torch.Tensor):
                         data_dict[k] = v.cuda()
@@ -218,11 +217,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
 
                 # with amp.autocast():
                 loss = torch.zeros(1)[0].cuda()
+                data_dict['step_ratio'] = n_itr / total_iter
                 loss += base_model(data_dict)
                 
-                # loss = safe_all_reduce(loss)
-                # if torch.cuda.current_device() == 0:
-                #     print("1", loss)
                 dist.all_reduce(loss, op=dist.ReduceOp.SUM)
                 loss = loss / dist.get_world_size() 
                 if not math.isfinite(loss.item()):
@@ -234,7 +231,6 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                         print_log("Loss in not finite. Terminate training.", logger = logger)
                         exit(-1)
                 
-                # scaler.scale(loss).backward()
                 loss.backward()
                 curr_nan_times = 0
             
@@ -247,20 +243,12 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                     optimizer.step()
                     base_model.zero_grad()
                     
-                # for n,p in base_model.module.named_parameters():
-                #     if torch.isnan(p).any():
-                #         print(n)
-                        
                 acc_step = int(len(train_dataloader) * epoch + idx)
                 if isinstance(scheduler, list):
                     for item in scheduler:
                         item.step(acc_step)
                 else:
                     scheduler.step(acc_step)
-                    
-                # for name, param in base_model.module.named_parameters():
-                #     if torch.isnan(param).any():
-                #         pass
 
                 if args.distributed:
                     loss = dist_utils.reduce_tensor(loss, args)
@@ -291,9 +279,6 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                     eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
                     print_log(f'ETA: {eta_str}', logger = logger)
                 
-                # if idx % 2500 == 0 and idx > 0:
-                #     builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-step-{}'.format(idx), args, logger = logger, finetune=finetune)
-                
             epoch_end_time = time.time()
 
             if train_writer is not None:
@@ -304,15 +289,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
 
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
-            # if epoch % args.val_freq == 0 :
-            #     # Validate the current model
-            #     metrics = validate(base_model, test_dataloader, epoch, val_writer, args, config, logger=logger, finetune=finetune)
 
-            #     # Save ckeckpoints
-            #     if metrics.better_than(best_metrics):
-            #         best_metrics = metrics
-            #         builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger, finetune=finetune) 
-            
         if train_writer is not None:
             train_writer.close()
         if val_writer is not None:
@@ -382,6 +359,7 @@ def pc_norm(pc):
     return pc
 
 def convert_pcd_to_image(pointcloud, color):
+    import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
     
     fig = plt.figure(figsize=(8, 8))
@@ -419,6 +397,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
     '''
     # Import
     from models.dvae import knn_point
+    import matplotlib.pyplot as plt
     map_colors = ["blue", "yellow", "red"]  
     from matplotlib.colors import LinearSegmentedColormap
     cmap = LinearSegmentedColormap.from_list("mycmap", map_colors)
