@@ -19,6 +19,7 @@
 # limitations under the License.
 """ PyTorch LLaMA model."""
 import math
+import copy
 import warnings
 from typing import List, Optional, Tuple, Union
 import os
@@ -317,7 +318,7 @@ class LlamaAttention(nn.Module):
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
         # Flex
-        if self.config.FLEX and layer_idx >= 8:
+        if self.config.FLEX and layer_idx >= self.config.START_FLEX_LAYER:
             if int(os.environ["RANK"]) == 0:
                 print(f"Flex enabled for layer {layer_idx}")
             self.k_proj_hd = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
@@ -373,11 +374,11 @@ class LlamaAttention(nn.Module):
         bsz, q_len, _ = hidden_states.size()
 
         has_hd_features = self.config.FLEX and hasattr(self, 'hd_features')
-        need_to_concat_hd_feature = self.layer_idx > 8 and has_hd_features
-        need_to_get_hd_feature_mask = self.layer_idx >= 8 and has_hd_features
-        # len(system_prompt) + <scene> + 128 + </scene> + len(visual_prompt) + len(instruction)
+        need_to_concat_hd_feature = self.layer_idx > self.config.START_FLEX_LAYER and has_hd_features
+        need_to_get_hd_feature_mask = self.layer_idx >= self.config.START_FLEX_LAYER and has_hd_features
         scene_token_start_index = self.config.scene_token_start_index
-        text_start_idx = scene_token_start_index + 128 + 1
+        start_learnable_seq_id = [int(id.item()) for id in self.config.start_learnable_seq_id]
+        end_learnable_seq_id = [int(id.item()) for id in self.config.end_learnable_seq_id]
     
         if self.config.pretraining_tp > 1:
             key_value_slicing = (self.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
@@ -426,10 +427,18 @@ class LlamaAttention(nn.Module):
     
         if need_to_concat_hd_feature:
             # [bsz, 128*4, 4096]
+            if not self.hd_features.shape[0] == bsz:
+                # Beam search
+                self.hd_features = self.hd_features.repeat(bsz, 1, 1, 1)
             hd_features = self.hd_features.view(bsz, -1, self.hidden_size)
             # As hd_features will be has the same position embedding as the hidden_states
             hd_cos = cos[scene_token_start_index: scene_token_start_index+128].repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=0)
             hd_sin = sin[scene_token_start_index: scene_token_start_index+128].repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=0)
+            # if not self.training:
+            #     # For eval we only deal with the last and valid hd tokens
+            #     hd_features = hd_features[:, last_select_mask_list[0][-1], :]
+            #     hd_cos = hd_cos[last_select_mask_list[0][-1]]
+            #     hd_sin = hd_sin[last_select_mask_list[0][-1]]
             key_hd_features = self.k_proj_hd(hd_features)
             value_hd_features = self.v_proj_hd(hd_features)
             key_hd_features = key_hd_features.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -449,18 +458,16 @@ class LlamaAttention(nn.Module):
             if need_to_concat_hd_feature:
                 # [bsz, 1 , seq_len, 512]
                 empty_mask_for_hd_features = torch.ones(attention_mask.shape[0], attention_mask.shape[1], attention_mask.shape[2], hd_features.shape[1], device=attention_mask.device, dtype=attention_mask.dtype) * torch.finfo(attn_weights.dtype).min
-                if not self.training:
-                    select_mask_for_hd_features = torch.ones(1, 1, 1, hd_features.shape[1], device=attention_mask.device, dtype=attention_mask.dtype)
-                    for ib in range(hd_features.shape[0]):
-                        select_mask_for_hd_features[ib, 0][last_select_mask_list[ib][-1].unsqueeze(0)] = 0.0
-                    attention_mask_select = torch.cat([attention_mask[:, :, -1:], select_mask_for_hd_features], dim=3)
-                    attn_weights_select = attn_weights[:, :, -1:] + attention_mask_select
-                else:
-                    select_mask_for_hd_features = empty_mask_for_hd_features.clone()
-                    for ib in range(hd_features.shape[0]):
-                        select_mask_for_hd_features[ib, 0][last_select_mask_list[ib]] = 0.0
-                    attention_mask_select = torch.cat([attention_mask, select_mask_for_hd_features], dim=3)
-                    attn_weights_select = attn_weights + attention_mask_select
+                # if not self.training:
+                #     select_mask_for_hd_features = torch.zeros(1, 1, 1, hd_features.shape[1], device=attention_mask.device, dtype=attention_mask.dtype)
+                #     attention_mask_select = torch.cat([attention_mask[:, :, -1:], select_mask_for_hd_features], dim=3)
+                #     attn_weights_select = attn_weights[:, :, -1:] + attention_mask_select
+                # else:
+                select_mask_for_hd_features = empty_mask_for_hd_features.clone()
+                for ib in range(hd_features.shape[0]):
+                    select_mask_for_hd_features[ib, 0][last_select_mask_list[ib]] = 0.0
+                attention_mask_select = torch.cat([attention_mask, select_mask_for_hd_features], dim=3)
+                attn_weights_select = attn_weights + attention_mask_select
                     
                 attention_mask_empty = torch.cat([attention_mask, empty_mask_for_hd_features], dim=3)
                 attn_weights = attn_weights + attention_mask_empty
@@ -475,21 +482,21 @@ class LlamaAttention(nn.Module):
             attn_output = torch.matmul(attn_weights, value_states)
             attn_output_select = torch.matmul(attn_weights_select, value_states) # [bsz, num_head, seq_len, head_dim]
             # Warm up: text token that proform flex attention = (1-α) * ori + α * flex
-            if self.training:
-                # As 1/self.warm_up will be used to warm up
-                self.warm_up = 3
-                alpha = min(1.0, self.warm_up * self.step_ratio)
-                select_mask_list = []
-                for ib in range(attn_weights.shape[0]):
-                    mask = torch.zeros(attn_output.shape[2], device=attn_output.device).bool()
-                    valid_seq_end_idx = sum(attention_mask[ib][0][-1] == 0).item()
-                    mask[text_start_idx:valid_seq_end_idx] = True
-                    select_mask_list.append(mask.unsqueeze(0).unsqueeze(0))
-                select_mask_list = torch.cat(select_mask_list, dim=0).expand(-1, attn_output.shape[1], -1)
-                attn_output[select_mask_list] *= (1.0 - alpha)
-                attn_output[select_mask_list] += attn_output_select[select_mask_list] * alpha
-            else:
-                attn_output[:,:,-1:] = attn_output_select
+            # if self.training:
+            # As 1/self.warm_up will be used to warm up
+            self.warm_up = self.config.FLEX_WARM_UP
+            alpha = min(1.0, self.warm_up * self.step_ratio) if self.training else 1.0
+            select_mask_list = []
+            for ib in range(attn_weights.shape[0]):
+                mask = torch.zeros(attn_output.shape[2], device=attn_output.device).bool()
+                mask[start_learnable_seq_id[ib]: end_learnable_seq_id[ib]+1] = True
+                select_mask_list.append(mask.unsqueeze(0).unsqueeze(0))
+            select_mask_list = torch.cat(select_mask_list, dim=0).expand(-1, attn_output.shape[1], -1)
+            attn_output[select_mask_list] *= (1.0 - alpha)
+            attn_output[select_mask_list] += attn_output_select[select_mask_list] * alpha
+            # else:
+            #     attn_output[:,:,-1:] = attn_output_select
+                
         else:
             # upcast attention to fp32
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -515,34 +522,59 @@ class LlamaAttention(nn.Module):
             
         select_mask_list = []
         if need_to_get_hd_feature_mask:
-            threshold = self.config.DENSE_TOKEN_SELECT_THRESHOLD
-            topk = self.config.DENSE_TOKEN_SELECT_TOPK
-            select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
-            # Mean in head dimension: [bsz, seq_len, seq_len]
             global_attention_weight = torch.sum(attn_weights, dim=1).detach()
-            scene_token_attention_weight = global_attention_weight[:, text_start_idx:, :][:, :, scene_token_start_index: scene_token_start_index+128]
-            # scene_token_attention_weight = nn.functional.softmax(scene_token_attention_weight, dim=-1)
-            # Get topk index
-            topk_index = torch.topk(scene_token_attention_weight, topk, dim=-1)[1]
-            for bi in range(attn_weights.shape[0]):
-                # As padding tokens will not deal with the flex attention
-                # valid_seq_end_idx = sum(attention_mask[bi][0][-1] == 0).item()
-                valid_seq_end_idx = self.config.valid_seq_len[bi].item()
-                if not self.training:
-                    assert valid_seq_end_idx == attn_weights.shape[-2]
-                for seq_id in range(valid_seq_end_idx-text_start_idx):
-                    for tidx in topk_index[bi][seq_id]:
-                        dense_token_start_idx = tidx * self.config.DENSE_TOKEN_NUM
-                        select_mask[seq_id + text_start_idx][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
-                select_mask_list.append(select_mask.long())
-        
-        # Drop hd weight in attention weights
-        # if need_to_concat_hd_feature and output_attentions:
-        #     attn_weights = attn_weights[:, :, :-hd_features.shape[1]]
+            # Mean in head dimension: [bsz, seq_len, seq_len]
+            # start_learnable_seq_id[0] as the start_learnable_seq_id is the same for all batch
+            scene_token_attention_weight = global_attention_weight[:, start_learnable_seq_id[0]:, :][:, :, scene_token_start_index: scene_token_start_index+128]
+            if hasattr(self.config, 'DENSE_TOKEN_SELECT_THRESHOLD'):
+                threshold = self.config.DENSE_TOKEN_SELECT_THRESHOLD
+                for bi in range(attn_weights.shape[0]):
+                    scene_token_attention_weight_per_batch = scene_token_attention_weight[bi]
+                    select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    # As padding tokens will not deal with the flex attention
+                    min_vals = scene_token_attention_weight_per_batch.min(dim=1, keepdim=True).values
+                    max_vals = scene_token_attention_weight_per_batch.max(dim=1, keepdim=True).values
+                    normalized_attention_weight = (scene_token_attention_weight_per_batch - min_vals) / (max_vals - min_vals)
+                    # [learnable_seq_len, 128]
+                    normalized_attention_weight = ((normalized_attention_weight * 255) > threshold).bool()
+                    expand_normalized_attention_weight = normalized_attention_weight.repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=-1)
+                    # if not self.training:
+                    #     select_mask[-1, :] = expand_normalized_attention_weight[-1]
+                    # else:
+                    select_mask[start_learnable_seq_id[0]:, :] = expand_normalized_attention_weight
+                    select_mask_list.append(select_mask.bool())
+            else:
+                topk = self.config.DENSE_TOKEN_SELECT_TOPK
+                # scene_token_attention_weight = nn.functional.softmax(scene_token_attention_weight, dim=-1)
+                # Get topk index
+                topk_index = torch.topk(scene_token_attention_weight, topk, dim=-1)[1]
+                for bi in range(attn_weights.shape[0]):
+                    select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    # As padding tokens will not deal with the flex attention
+                    # if not self.training:
+                    #     # Only deal with the last token
+                    #     assert end_learnable_seq_id == attn_weights.shape[-2], "{} v.s {}".format(end_learnable_seq_id, attn_weights.shape[-2])
+                    #     assert topk_index.shape[0] == 1
+                    #     seq_id = end_learnable_seq_id - 1 
+                    #     assert seq_id == select_mask.shape[0] - 1
+                    #     for tidx in topk_index[0][seq_id-text_start_idx]:
+                    #         dense_token_start_idx = int(tidx * self.config.DENSE_TOKEN_NUM)
+                    #         select_mask[seq_id][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
+                    # else:
+                    for seq_id in range(start_learnable_seq_id[bi], end_learnable_seq_id[bi]+1):
+                        if not self.training:
+                            assert end_learnable_seq_id[bi]+1 == attn_weights.shape[-2], "{} v.s. {}".format(end_learnable_seq_id[bi]+1, attn_weights.shape[-2])
+                        for tidx in topk_index[bi][seq_id-start_learnable_seq_id[0]]:
+                            dense_token_start_idx = int(tidx * self.config.DENSE_TOKEN_NUM)
+                            select_mask[seq_id][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
+                    select_mask_list.append(select_mask.bool())
 
         if not output_attentions:
             attn_weights = None
         else:
+            # Drop hd weight in attention weights
+            if need_to_concat_hd_feature:
+                attn_weights = attn_weights[..., :-hd_features.shape[1]]
             attn_weights = attn_weights.detach().cpu()
 
         return attn_output, attn_weights, past_key_value, select_mask_list
@@ -1253,7 +1285,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         vp_token_ids = tokenizer.convert_tokens_to_ids(vp_tokens)[0]
         
         # As all placehold index will be the same, we can just take the first one
-        placeholder_idx = [torch.where(input_ids == scene_token_ids)[1][0], torch.where(input_ids == vp_token_ids)[1][0]]
+        placeholder_idx = [torch.where(input_ids == scene_token_ids)[1][0], 
+                           torch.where(input_ids == vp_token_ids)[1][0]]
         
         embedding_layer = self.get_input_embeddings()
         
@@ -1262,18 +1295,50 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
                                     vision_embeds, 
                                     embedding_layer(input_ids[:, placeholder_idx[0]+1: placeholder_idx[1]]),
                                     visual_prompt_embeds,
-                                    embedding_layer(input_ids[:, placeholder_idx[1]+1:])), dim=1)
+                                    embedding_layer(input_ids[:, placeholder_idx[1]+1: ]),
+                                    ), 
+                                    dim=1)
                                     
         new_inputs_mask = torch.cat((input_mask[:, :placeholder_idx[0]],
                                     vision_mask,
                                     input_mask[:, placeholder_idx[0]+1: placeholder_idx[1]],
                                     visual_prompt_mask,
-                                    input_mask[:, placeholder_idx[1]+1:]), dim=1)
+                                    input_mask[:, placeholder_idx[1]+1: ],
+                                    ), 
+                                    dim=1)
         
+        # {system prompt} <scene><scene_placehold></scene> <vp_placehold> {instruction} 
+        # intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+        # [!!!!!] the <space> is extractly exist in the input_ids
         self.config.scene_token_start_index = placeholder_idx[0].item()
         
-        # Set valid_seq_len
-        self.config.valid_seq_len = new_inputs_mask.sum(dim=1).int()
+        # Set learnable id for flex attention: [!!!]visual prompt will view as non-learnable
+        start_learnable_seq_id = torch.zeros((input_ids.shape[0]))
+        end_learnable_seq_id = torch.zeros((input_ids.shape[0]))
+        space_len = 1
+        # </scene>
+        end_scene_len = 1
+        for bi in range(input_ids.shape[0]):
+            # All instruction use flex attn
+            # if not self.config.ONLY_ANS_FLEX:
+            start_learnable_seq_id[bi] = (self.config.scene_token_start_index-1) + vision_embeds.shape[1] + end_scene_len + space_len + visual_prompt_embeds.shape[1] + space_len
+            end_learnable_seq_id[bi] = start_learnable_seq_id[bi] + (input_mask[bi, (placeholder_idx[1]+1+space_len):]==1).sum().item()
+            # else:
+            #     # Only answers use flex attn
+            #     # Instr: ### Humman:xxx User:<learnable><answer>
+            #     batch_start_learnable_id = self.config.start_learnable_id
+            #     # -1 Indicates that flex attn is to be executed for one token before the token generation begins
+            #     start_learnable_id = batch_start_learnable_id[bi].item() - 1
+            #     vision_token_len = 128
+            #     vp_token_len = visual_prompt_embeds.shape[1]
+            #     scene_placehold_len = 1
+            #     vp_placehold_len = 1 
+            #     start_learnable_seq_id[bi] = start_learnable_id+vision_token_len-scene_placehold_len+vp_token_len-vp_placehold_len
+            #     end_learnable_seq_id[bi] = start_learnable_seq_id[bi]+(input_mask[bi, start_learnable_id+1:]==1).sum().item()
+            if not self.training:
+                assert end_learnable_seq_id[bi]+1 == len(new_inputs_embeds[bi])
+        self.config.start_learnable_seq_id = start_learnable_seq_id
+        self.config.end_learnable_seq_id = end_learnable_seq_id
         
         return new_inputs_embeds, new_inputs_mask
     

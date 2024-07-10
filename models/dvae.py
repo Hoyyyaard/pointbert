@@ -153,7 +153,7 @@ class Group(nn.Module):
         self.group_size = group_size
         # self.knn = KNN(k=self.group_size, transpose_mode=True)
 
-    def forward(self, xyz):
+    def forward(self, xyz, normalize=True):
         '''
             input: B N 3
             ---------------------------
@@ -184,7 +184,8 @@ class Group(nn.Module):
             neighborhood_rgb = rgb.view(batch_size * num_points, -1)[idx, :]
             neighborhood_rgb = neighborhood_rgb.view(batch_size, self.num_group, self.group_size, -1).contiguous()
         # normalize
-        neighborhood_xyz = neighborhood_xyz - center.unsqueeze(2)
+        if normalize:
+            neighborhood_xyz = neighborhood_xyz - center.unsqueeze(2)
         if C > 3:
             neighborhood = torch.cat((neighborhood_xyz, neighborhood_rgb), dim=-1)
         else:

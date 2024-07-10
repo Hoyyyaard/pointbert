@@ -212,7 +212,7 @@ def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_met
                 if name.find('llm.') != -1:
                     all_weight_ckpt.pop(name)
         else:
-            # all_weight_ckpt = {'llm.{}'.format(k):v for k,v in llm_weight_ckpt.items()}
+            all_weight_ckpt = {'llm.{}'.format(k):v for k,v in llm_weight_ckpt.items()}
             # for k,v in base_model.state_dict().items():
             #     if k.find('llm.') != -1:
             #         all_weight_ckpt[k] = v

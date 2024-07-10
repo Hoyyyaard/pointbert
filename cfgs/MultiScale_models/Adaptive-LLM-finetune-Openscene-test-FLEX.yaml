@@ -22,12 +22,12 @@ model : {
   NAME: Openscene, 
 
   DTYPE: FP16,
-  distributed: DDP,  # DDP, FSDP
+  distributed: FSDP,  # DDP, FSDP
 
   FLEX: True,
   DENSE_TOKEN_NUM: 4,
   DENSE_TOKEN_SELECT_THRESHOLD: 64,
-  DENSE_TOKEN_SELECT_TOPK: 10,
+  # DENSE_TOKEN_SELECT_TOPK: 10,
 
   quantization: False, 
 

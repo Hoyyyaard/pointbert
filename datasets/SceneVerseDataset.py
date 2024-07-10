@@ -158,6 +158,28 @@ TASK_PROMPT = {
             do_localize=True
         ),
     ],
+    'hd_scene_qa': [
+        dict(
+            instruction='### human: given the multi-rooms 3D scene, answer the question: "{question}" ### assistant:',
+            answer='{answer}',
+            do_localize=False
+        ),
+        dict(
+            instruction='### human: answer this quesiton according to the given multi-rooms 3D scene: "{question}" ### assistant:',
+            answer='{answer}',
+            do_localize=False
+        ),
+        dict(
+            instruction='### human: answer the question: "{question}" with the related object locations in the input multi-rooms 3D scene. ### assistant:',
+            answer='the answer is: {answer}, and the related objects are localized at {locations}',
+            do_localize=True
+        ),
+        dict(
+            instruction='### human: given the multi-rooms 3D scene, localize all the related objects first, then answer the question: "{question}" ### assistant:',
+            answer='the related objects are localized at {locations}, the answer is: {answer}',
+            do_localize=True
+        ),
+    ],
     'region_caption':[
         dict(
             instruction='### human: Describe the position of this object in relation to the surrounding objects in the 3D scene. ### assistant:',
@@ -748,6 +770,7 @@ def convert_objectpoints_to_bbox_str(points, object_points):
     boxes_str = encode_box_coords(box_centers_normalized[0], box_sizes_normalized[0])
     return boxes_str
 
+
 @DATASETS.register_module()
 class SceneVerseLLMPretrainDataset(Dataset):
     def __init__(self, config):
@@ -983,6 +1006,9 @@ class SceneVerseLLMPretrainDataset(Dataset):
         dist.broadcast_object_list(self.all_relation_caption, src=0)
         dist.broadcast_object_list(self.all_object_caption, src=0)
         
+        self.all_relation_caption  = self.all_relation_caption[:len(self.all_scene_caption)]
+        self.all_object_caption  = self.all_object_caption[:len(self.all_scene_caption)]
+        
         if config.subset == 'train':
             self.all_scene_caption = self.all_scene_caption[:-2000]
             self.all_relation_caption = self.all_relation_caption[:-2000]
@@ -1007,8 +1033,8 @@ class SceneVerseLLMPretrainDataset(Dataset):
         self.order_levels = []
         
         # Shuffle code
-        self.order_episodes.extend(self.all_scene_caption)
-        self.order_levels.extend(['scene'] * len(self.all_scene_caption))
+        # self.order_episodes.extend(self.all_scene_caption)
+        # self.order_levels.extend(['scene'] * len(self.all_scene_caption))
         self.order_episodes.extend(self.all_relation_caption)
         self.order_levels.extend(['region'] * len(self.all_relation_caption))
         self.order_episodes.extend(self.all_object_caption)
@@ -1088,7 +1114,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
         dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
         
         self.tokenizer_config = dict(
-            max_length=300, 
+            max_length=256, 
             padding='max_length', 
             truncation='longest_first', 
             return_tensors='np'
@@ -1242,7 +1268,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = 'right'
         
+        self.wohd = config.get('wohd', False)
         self.config = config
+        
+        if not hasattr(self.config, 'differ_prompt'):
+            self.config.differ_prompt = False
         
         self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
         self.VP_TOKEN = '<vp_placehold>'
@@ -1264,6 +1294,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self.EXTEND = config.get('EXTEND', False)
         if self.EXTEND:
             print_log("Use extend dataset", logger = 'SceneVerse')
+        self.UES_HD_DATA = config.get('UES_HD_DATA', False)
+        if self.UES_HD_DATA:
+            print_log("Use HD dataset", logger = 'SceneVerse')
         
         # Load scene level data
         self._npoint = config.N_POINTS
@@ -1400,7 +1433,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                                                     })
             embodied_question_answer_anno = json.load(open(f'data/SceneVerse/3D_LLM/3d_llm_embodied_question_answer_{config.subset}.json'))
             for eqa in embodied_question_answer_anno:
-                scan_name = eqa['scene_id']
+                scan_name = eqa['scene_id']                
                 self.all_scene_understanding.append({'dataset_name':'ScanNet', 
                                                     "scan_name":scan_name,
                                                     "anno":eqa, 
@@ -1465,6 +1498,31 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                                                 'episode_id':'{}#{}'.format(dataset_name, scan_name)
                                                 })
 
+        # Load HD QA datasets
+        if self.UES_HD_DATA:
+            hd_qa_source_dir_f = 'data/SceneVerse/HM3D/annotations/qa/qa_pairs/{}.json'.format(config.subset)
+            with open(hd_qa_source_dir_f, 'r') as f:
+                datas = json.load(f)
+            for scan_name, episodes in datas.items():
+                for epi in episodes:
+                    for qa in epi['qa_pairs']:
+                        anno = {
+                            'question': qa['question'],
+                            'answers': [qa['answer']],
+                            'type': qa['type'],
+                            'target_id': epi['target_id'],
+                            'instance_type': epi['instance_type'],
+                            # 'utterance': epi['utterance'],
+                        }
+                        self.all_scene_qa.append({'dataset_name':'HM3D', 
+                                                "scan_name":scan_name, 
+                                                'instance_room_id': epi['scan_id'].split('_')[-1],
+                                                "anno":anno, 
+                                                "task_name": "hd_scene_qa",
+                                                'region_id': qa['region_id'],
+                                                'episode_id':'{}#{}#{}#{}'.format('HM3D', scan_name, qa['region_id'], qa['question'])
+                                                })
+        
         print_log(f'[DATASET] {len(self.all_scene_qa)} scene qa were loaded from scan data', logger = 'SceneVerse')
         print_log(f'[DATASET] {len(self.all_object_caption)} object captions were loaded from scan data', logger = 'SceneVerse')
         print_log(f'[DATASET] {len(self.all_scene_understanding)} scene captions were loaded from scan data', logger = 'SceneVerse')
@@ -1485,6 +1543,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         # Prepare corpus for evaluation
         self.corpus = {
             'scene_qa': copy.deepcopy(self.all_scene_qa),
+            'hd_scene_qa': copy.deepcopy(self.all_scene_qa),
             'object_caption': copy.deepcopy(self.all_object_caption),
             'scene_understanding': copy.deepcopy(self.all_scene_understanding)
         }
@@ -1569,22 +1628,53 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         dataset_name, scan_name, anno, task_name = data['dataset_name'], data['scan_name'], data['anno'], data['task_name']
         
         self.tokenizer_config = dict(
-            max_length=300, 
+            max_length= 256, 
             padding='max_length', 
             truncation='longest_first', 
             return_tensors='np'
         )
-
-        points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
+        if task_name == 'hd_scene_qa':
+            room_center = torch.load(os.path.join('data/SceneVerse/HM3D/scan_data/room_center', '{}.pth'.format(scan_name)))
+            region_id = data['region_id']
+            instance_room_id = data['instance_room_id']
+            points = []
+            colors = []
+            features = []
+            instance_labels = []
+            inst_to_label = {}
+            for room_id in region_id.split('-'):
+                pts, cols, fts, ils, itl = self._load_scan_data(f'{scan_name}_{room_id}.pth', dataset_name)
+                points.extend(pts + room_center[room_id]['center'])
+                colors.extend(cols)
+                features.extend(fts)
+                if room_id == instance_room_id:
+                    instance_labels.extend(ils)
+                else:
+                    instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
+                inst_to_label[room_id] = itl
+            points = np.array(points)
+            points = pc_norm(points)
+            colors = np.array(colors)
+            features = np.array(features)
+            instance_labels = np.array(instance_labels)
+        else:
+            points, colors, features, instance_labels, inst_to_label = self._load_scan_data(f'{scan_name}.pth', dataset_name)
         points = pc_norm(points)
+        
         click_query = np.zeros((1, 3))
         click_mask = np.zeros((1,))
         box_mask = np.zeros((1,))
         box_query = np.zeros((features.shape[-1],))
         
         # Get HD Info
-        N = 100000
-        hd_points, hd_features, _, _ = down_sample(points, features, npoint=N)
+        N = 160000
+        if not self.wohd:
+            hd_points, hd_features, _, _ = down_sample(points, features, npoint=N)
+            hd_points = hd_points.astype(np.float32)
+            hd_features = hd_features.astype(np.float32)
+        else:
+            hd_points = None
+            hd_features = None
         points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
         
         ret_dict = {
@@ -1595,8 +1685,6 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             'scan_name': scan_name,
             'task_name': task_name,
             'episode_id': data['episode_id'],
-            'hd_points': hd_points.astype(np.float32),
-            'hd_features': hd_features.astype(np.float32),
             'click_query': click_query.astype(np.float32),
             'click_mask': click_mask.astype(np.float32),
             'box_mask': box_mask.astype(np.float32),
@@ -1604,15 +1692,26 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             'points': points.astype(np.float32),
             'colors': colors.astype(np.float32),
         }
+        
+        if not self.wohd:
+            ret_dict['hd_points'] = hd_points
+            ret_dict['hd_features'] = hd_features
+        
         if self.OPENSCENE:
             ret_dict['features'] = features
     
         if task_name == 'scene_qa':
-            if self.config.subset == 'train' and random.random() < 0.25:
+            target_obj_id = None
+            if self.config.subset == 'train' and random.random() < 0.25 and 'object_ids' in anno.keys():
                 target_obj_id = random.choice(anno['object_ids'])
                 object_points = points[instance_labels == target_obj_id]    # npt x 3
                 click_query[0] = random.choice(object_points)
                 click_mask[0] = 1
+            # elif self.config.subset == 'val':
+            #     target_obj_id = random.choice(anno['object_ids'])
+            #     object_points = points[instance_labels == target_obj_id]    # npt x 3
+            #     click_query[0] = random.choice(object_points)
+            #     click_mask[0] = 1
             ret_dict.update({
                 'click_query': click_query.astype(np.float32),
                 'click_mask': click_mask.astype(np.float32),
@@ -1622,10 +1721,14 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             question = anno['question']
             # build prompts
-            if self.config.subset == 'train' and len(anno['object_ids']) == 1:
-                object_points = points[instance_labels == (anno['object_ids'][0])]    
-                boxes = convert_objectpoints_to_bbox_str(points, object_points)
-                prompt = deepcopy(random.choice(TASK_PROMPT[task_name]))
+            if 'object_ids' in anno.keys():
+                if self.config.subset == 'train' and len(anno['object_ids']) == 1 :
+                    object_points = points[instance_labels == (random.choice(anno['object_ids']) if target_obj_id is None else target_obj_id)]    
+                    boxes = convert_objectpoints_to_bbox_str(points, object_points)
+                    prompt = deepcopy(random.choice(TASK_PROMPT[task_name]))
+                else:
+                    prompt = deepcopy(TASK_PROMPT[task_name][0])
+                    boxes = '' 
             else:
                 prompt = deepcopy(TASK_PROMPT[task_name][0])
                 boxes = ''
@@ -1644,6 +1747,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
             ret_dict['gradient_mask'] = \
                 (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            # ret_dict['start_learnable_id'] = np.array(np.where(ret_dict['gradient_mask']==1)[0][0]).astype(np.int64)
             ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
 
@@ -1667,7 +1771,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
             ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
             ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-
+            # try:
+            #     ret_dict['start_learnable_id'] = np.array(np.where(ret_dict['gradient_mask']==1)[0][0]).astype(np.int64)
+            # except:
+            #     ret_dict = self.last_scene_understanding_ret_dict
+            #     print('Error: start_learnable_id ')
+            # self.last_scene_understanding_ret_dict = ret_dict
             return ret_dict
         
         # Object Caption
@@ -1711,7 +1820,51 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
             ret_dict['gradient_mask'] = \
                 (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            # ret_dict['start_learnable_id'] = np.array(np.where(ret_dict['gradient_mask']==1)[0][0]).astype(np.int64)
+            return ret_dict
+        
+        elif task_name == 'hd_scene_qa':
+        
+            target_obj_id = int(anno['target_id'])
+            object_points = points[instance_labels == target_obj_id]    # npt x 3
+                
+            if self.config.subset == 'train' and random.random() < 0.25 and len(object_points) > 0:
+                click_query[0] = random.choice(object_points)
+                click_mask[0] = 1
+            ret_dict.update({
+                'click_query': click_query.astype(np.float32),
+                'click_mask': click_mask.astype(np.float32),
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
+            })
             
+            question = anno['question']
+            
+            # if self.config.subset == 'train' and len(object_points) > 0:
+            #     boxes = convert_objectpoints_to_bbox_str(points, object_points)
+            #     prompt = deepcopy(random.choice(TASK_PROMPT['scene_qa'])) if not self.config.differ_prompt else deepcopy(random.choice(TASK_PROMPT['hd_scene_qa']))
+            # else:
+            prompt = deepcopy(TASK_PROMPT['scene_qa'][0]) if not self.config.differ_prompt else deepcopy(TASK_PROMPT['hd_scene_qa'][0])
+            boxes = ''
+            
+            intruction = prompt['instruction'].format(locations=boxes, question=question)
+            # Add special token 
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            answers = anno['answers'][0]
+            answers = prompt['answer'].format(locations=boxes, answer=answers)
+            llm_inputs = self.tokenizer.batch_encode_plus(
+                [' '.join((intruction, answers, self.tokenizer.eos_token))],
+                **self.tokenizer_config
+            )
+            
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+            # ret_dict['start_learnable_id'] = np.array(np.where(ret_dict['gradient_mask']==1)[0][0]).astype(np.int64)
             return ret_dict
         
         """ elif task_name == 'object_grouding' or task_name == 'object_caption_given_bbox':
@@ -1806,3 +1959,202 @@ class SceneVerseLLMFinetuneDataset(Dataset):
 
             return ret_dict """
             
+
+@DATASETS.register_module()
+class HD_Hm3dQADataset(Dataset):
+    def __init__(self, config):
+        super().__init__()
+        self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = 'right'
+        
+        self.config = config
+        
+        if not hasattr(self.config, 'differ_prompt'):
+            self.config.differ_prompt = False
+        print('Use Different Prompt:', self.config.differ_prompt)
+        
+        self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
+        self.VP_TOKEN = '<vp_placehold>'
+        
+        special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
+        # xyz_prompt = '<loc{}>'
+        # for i in range(255):
+        #     special_tokens.append(xyz_prompt.format(i))
+        # whl_prompt = '<whl{}>'
+        # for i in range(255):
+        #     special_tokens.append(whl_prompt.format(i))
+        self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
+        
+        # If use openscene as encoder
+        self.OPENSCENE = config.OPENSCENE
+        self._openscene_root = 'data/SceneVerse/OpenScene_Scan_Features'
+        
+        # Load scene level data
+        self._npoint = config.N_POINTS
+        self._group_size = config.GROUP_SIZE
+        self._num_groups = config.NUM_GROUP
+        self._all_dataset_root = 'data/SceneVerse'
+        
+        qa_source_dir_f = 'data/SceneVerse/HM3D/annotations/qa/qa_pairs/{}.json'.format(config.subset)
+        with open(qa_source_dir_f, 'r') as f:
+            datas = json.load(f)
+        self.all_scene_qa = []
+        for scan_name, episodes in datas.items():
+            for epi in episodes:
+                for qa in epi['qa_pairs']:
+                    anno = {
+                        'question': qa['question'],
+                        'answers': [qa['answer']],
+                        'type': qa['type'],
+                        'target_id': epi['target_id'],
+                        'instance_type': epi['instance_type'],
+                        # 'utterance': epi['utterance'],
+                    }
+                    self.all_scene_qa.append({'dataset_name':'HM3D', 
+                                            "scan_name":scan_name, 
+                                            'instance_room_id': epi['scan_id'].split('_')[-1],
+                                            "anno":anno, 
+                                            "task_name": "scene_qa",
+                                            'region_id': qa['region_id'],
+                                            'episode_id':'{}#{}#{}#{}'.format('HM3D', scan_name, qa['region_id'], qa['question'])
+                                            })
+        print_log(f'[DATASET] {len(self.all_scene_qa)} scene qa were loaded from HM3D scan data', logger = 'HD_Hm3dQADataset')
+        
+        # Prepare corpus for evaluation
+        self.corpus = {
+            'scene_qa': copy.deepcopy(self.all_scene_qa),
+        }
+        
+    def _load_scan(self, pcd_path, inst2label_path, scan_name):
+        pcd_data = torch.load(os.path.join(pcd_path, f'{scan_name}'))
+        try:
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}"))
+        except:
+            inst_to_label = None
+        points, colors, instance_labels = pcd_data[0], pcd_data[1], pcd_data[-1]
+    
+        pcds = np.concatenate([points, colors], 1)
+        return points, colors, pcds, instance_labels, inst_to_label
+    
+    def _load_scan_data(self, scan_name, dataset_name):
+        if not self.OPENSCENE:
+            dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+            annotation_root = os.path.join(dataset_root, 'annotations')
+            scan_data_root = os.path.join(dataset_root, 'scan_data')
+            
+            inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+            pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
+
+            points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
+            features = None
+        else:
+            dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+            scan_data_root = os.path.join(dataset_root, 'scan_data')
+            inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}")) 
+            dataset_root = os.path.join(self._openscene_root, dataset_name)
+            dict = torch.load(os.path.join(dataset_root, scan_name), map_location='cpu')
+            points = dict['points'].numpy().astype(np.float32)
+            colors = dict['colors'].numpy()
+            features = dict['features'].numpy().astype(np.float32)
+            instance_labels = dict['instance_labels'].numpy()
+        return points, colors, features, instance_labels, inst_to_label
+    
+    def __len__(self):
+        return len(self.all_scene_qa)
+    
+    def __getitem__(self, index):
+        
+        data = self.all_scene_qa[index]
+        dataset_name, scan_name, anno, task_name, region_id = data['dataset_name'], data['scan_name'], data['anno'], data['task_name'], data['region_id']
+        instance_room_id = data['instance_room_id']
+        tgt_id = int(anno['target_id'])
+        room_center = torch.load(os.path.join('data/SceneVerse/HM3D/scan_data/room_center', '{}.pth'.format(scan_name)))
+        
+        self.tokenizer_config = dict(
+            max_length=256, 
+            padding='max_length', 
+            truncation='longest_first', 
+            return_tensors='np'
+        )
+        
+        points = []
+        colors = []
+        features = []
+        instance_labels = []
+        inst_to_label = {}
+        for room_id in region_id.split('-'):
+            pts, cols, fts, ils, itl = self._load_scan_data(f'{scan_name}_{room_id}.pth', dataset_name)
+            points.extend(pts + room_center[room_id]['center'])
+            colors.extend(cols)
+            features.extend(fts)
+            if room_id == instance_room_id:
+                instance_labels.extend(ils)
+            else:
+                instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
+            inst_to_label[room_id] = itl
+        
+        points = np.array(points)
+        points = pc_norm(points)
+        colors = np.array(colors)
+        features = np.array(features)
+        instance_labels = np.array(instance_labels)
+
+
+        # Get HD Info
+        N = 160000
+        hd_points, hd_features, hd_colors, hd_instance_lables = down_sample(points, features, colors, instance_labels, npoint=N)
+        
+        # Viusalization code  
+        # print(inst_to_label[instance_room_id][tgt_id])
+        # print(anno['utterance'])
+        # visulization_pointclouds_bbox_use_plt(points, colors, points[instance_labels==tgt_id])
+    
+        points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
+
+        click_query = np.zeros((1, 3))
+        click_mask = np.zeros((1,))
+        box_mask = np.zeros((1,))
+        box_query = np.zeros((features.shape[-1],))
+        ret_dict = {
+            'num_groups': self._num_groups,
+            'group_size': self._group_size,
+            'dataset_name': dataset_name,
+            'level': 'scene',
+            'scan_name': scan_name,
+            'task_name': task_name,
+            'episode_id': data['episode_id'],
+            'hd_points': hd_points.astype(np.float32),
+            'hd_features': hd_features.astype(np.float32),
+            'points': points.astype(np.float32),
+            'colors': colors.astype(np.float32),
+            'features': features.astype(np.float32),
+            'click_query': click_query.astype(np.float32),
+            'click_mask': click_mask.astype(np.float32),
+            'box_mask': box_mask.astype(np.float32),
+            'box_query': box_query.astype(np.float32),
+        }
+        
+        question = anno['question']
+        prompt = deepcopy(TASK_PROMPT['scene_qa'][0]) if not self.config.differ_prompt else deepcopy(TASK_PROMPT['hd_scene_qa'][0])
+        boxes = ''
+        intruction = prompt['instruction'].format(locations=boxes, question=question)
+        # Add special token 
+        intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+        prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+        answers = anno['answers'][0]
+        answers = prompt['answer'].format(locations=boxes, answer=answers)
+        llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+        )
+        
+        ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+        ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+        ret_dict['gradient_mask'] = \
+            (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+        ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+        ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+        # ret_dict['start_learnable_id'] = np.array(np.where(ret_dict['gradient_mask']==1)[0][0]).astype(np.int64)
+        return ret_dict

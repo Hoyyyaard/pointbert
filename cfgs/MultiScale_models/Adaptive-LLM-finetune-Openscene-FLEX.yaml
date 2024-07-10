@@ -21,13 +21,12 @@ dataset : {
 model : {
   NAME: Openscene, 
 
-  DTYPE: FP32,
+  DTYPE: FP16,
   distributed: FSDP,  # DDP, FSDP
   quantization: False, 
 
   FLEX: True,
   DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 64,
   DENSE_TOKEN_SELECT_TOPK: 10,
 
   trans_dim: 768,
@@ -49,7 +48,7 @@ model : {
 }
 
 finetune : True
-total_bs : 120
+total_bs : 7
 step_per_update : 1
 max_epoch : 5
 

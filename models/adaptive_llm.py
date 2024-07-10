@@ -1,6 +1,7 @@
 from torch import nn
 import torch
 from models.modeling_llama import LlamaForCausalLM
+from models.modeling_llama_old_version import LlamaForCausalLM as LlamaForCausalLM_Ori
 from models.Point_BERT import PointTransformer
 from transformers import BitsAndBytesConfig
 import torch.nn.functional as nnf
@@ -8,21 +9,25 @@ from transformers import AutoTokenizer
 from tools.generation_utils import generation
 from utils.logger import print_log
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
-from models.dvae import Group
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import (
     enable_wrap,
     transformer_auto_wrap_policy,
     wrap,
 )
+from models.dvae import knn_point, square_distance, Group
+from utils import misc
 import functools
 from models.modeling_llama import LlamaDecoderLayer
+from models.modeling_llama_old_version import LlamaDecoderLayer as LlamaDecoderLayer_Ori
 import numpy as np
 import os 
 from utils.logger import *
 from pointnet2_ops import pointnet2_utils
 from tools.position_embedding import PositionEmbeddingCoordsSine
 
+
+NORM = True 
 
 class OpensceneEncoder(nn.Module):
     def __init__(self, encoder_config):
@@ -52,7 +57,7 @@ class OpensceneEncoder(nn.Module):
             xyz = xyzs[scene_idx][:, :self.scene_npoints, :]
             scene_pointclouds = torch.cat([xyz, scene_fts], dim=-1).contiguous()
             ## batch_size, num_group, group_size, 768
-            scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds)
+            scene_neighborhood, scene_center = self.pointcloud_tokenizer(scene_pointclouds, normalize=NORM)
             ## Drop xyz
             neighborhood_xyz = scene_neighborhood[... , :3]
             scene_fts = scene_neighborhood[... , 3:].mean(-2)
@@ -61,7 +66,56 @@ class OpensceneEncoder(nn.Module):
             assert False
         
         return all_fts, all_fts_mask, scene_center, neighborhood_xyz
+
+
+class CenterGroup(nn.Module):
+    def __init__(self, num_group, group_size):
+        super().__init__()
+        self.num_group = num_group
+        self.group_size = group_size
+        # self.knn = KNN(k=self.group_size, transpose_mode=True)
+
+    def forward(self, xyz, center):
+        '''
+            input: B N 3
+            ---------------------------
+            output: B G M 3
+            center : B G 3
+        '''
+        B, N, C = xyz.shape
+        if C > 3:
+            data = xyz
+            xyz = data[:,:,:3].contiguous()
+            rgb = data[:, :, 3:].contiguous()
         
+        batch_size, num_points, _ = xyz.shape
+        
+        # fps the centers out
+        # center = misc.fps(xyz, self.num_group) # B G 3
+        
+        # knn to get the neighborhood
+        # _, idx = self.knn(xyz, center) # B G M
+        idx = knn_point(self.group_size, xyz, center) # B G M
+        assert idx.size(1) == self.num_group
+        assert idx.size(2) == self.group_size
+        idx_base = torch.arange(0, batch_size, device=xyz.device).view(-1, 1, 1) * num_points
+        idx = idx + idx_base
+        idx = idx.view(-1)
+        
+        neighborhood_xyz = xyz.view(batch_size * num_points, -1)[idx, :]
+        neighborhood_xyz = neighborhood_xyz.view(batch_size, self.num_group, self.group_size, 3).contiguous()
+        if C > 3:
+            neighborhood_rgb = rgb.view(batch_size * num_points, -1)[idx, :]
+            neighborhood_rgb = neighborhood_rgb.view(batch_size, self.num_group, self.group_size, -1).contiguous()
+        # normalize
+        if NORM:
+            neighborhood_xyz = neighborhood_xyz - center.unsqueeze(2)
+        if C > 3:
+            neighborhood = torch.cat((neighborhood_xyz, neighborhood_rgb), dim=-1)
+        else:
+            neighborhood = neighborhood_xyz
+        return neighborhood
+
         
 class AdaptiveLLM(nn.Module):
     def __init__(self, llm_config, encoder_config, finetune=False, logger=None, args=None):
@@ -73,41 +127,64 @@ class AdaptiveLLM(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf')
         self.logger = get_logger(args.log_name)
         self.args = args
+        self.finetune = finetune
         
         self.FLEX = hasattr(self._encoder_config, 'FLEX')
         self._llm_config.FLEX = self.FLEX
         self._llm_config.DENSE_TOKEN_NUM = self._encoder_config.DENSE_TOKEN_NUM if hasattr(self._encoder_config, 'DENSE_TOKEN_NUM') else None
-        self._llm_config.DENSE_TOKEN_SELECT_THRESHOLD = self._encoder_config.DENSE_TOKEN_SELECT_THRESHOLD if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_THRESHOLD') else None
-        self._llm_config.DENSE_TOKEN_SELECT_TOPK = self._encoder_config.DENSE_TOKEN_SELECT_TOPK if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_TOPK') else None
+        if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_THRESHOLD'):
+            print_log("DENSE_TOKEN_SELECT_THRESHOLD is set to {}".format(self._encoder_config.DENSE_TOKEN_SELECT_THRESHOLD), logger=self.logger)
+            self._llm_config.DENSE_TOKEN_SELECT_THRESHOLD = self._encoder_config.DENSE_TOKEN_SELECT_THRESHOLD 
+        if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_TOPK'):    
+            self._llm_config.DENSE_TOKEN_SELECT_TOPK = self._encoder_config.DENSE_TOKEN_SELECT_TOPK
+            print_log("DENSE_TOKEN_SELECT_TOPK is set to {}".format(self._encoder_config.DENSE_TOKEN_SELECT_TOPK), logger=self.logger)
+        if hasattr(self._encoder_config, 'START_FLEX_LAYER'):
+            self._llm_config.START_FLEX_LAYER = int(self._encoder_config.START_FLEX_LAYER)
+        else:
+            self._llm_config.START_FLEX_LAYER = 8
+        if hasattr(self._encoder_config, 'FLEX_WARM_UP'):
+            self._llm_config.FLEX_WARM_UP = int(self._encoder_config.FLEX_WARM_UP)
+        else:
+            self._llm_config.FLEX_WARM_UP = 20
+        print_log("START_FLEX_LAYER is set to {}".format(self._llm_config.START_FLEX_LAYER), logger=self.logger)
+        print_log("FLEX_WARM_UP is set to {}".format(self._llm_config.FLEX_WARM_UP), logger=self.logger)
+        
+        if hasattr(self._encoder_config, 'ONLY_ANS_FLEX'):
+            self._llm_config.ONLY_ANS_FLEX = self._encoder_config.ONLY_ANS_FLEX
+        else:
+            self._llm_config.ONLY_ANS_FLEX = False
+        
         
         model_path = 'ckpts/Llama-2-7b-hf'
         if hasattr(self._encoder_config,"LLAVA"):
             model_path = 'ckpts/llava-v1.5-7b'
             print_log("Using LLAVA Finetune")
-            
+        
+        select_model = LlamaForCausalLM if finetune else LlamaForCausalLM_Ori
+        self.llm_layer = LlamaDecoderLayer if finetune else  LlamaDecoderLayer_Ori
+        
         # For debug in 3090
         if encoder_config.quantization:
-            print_log("Quantization is enabled")
+            print_log("Quantization is enabled", logger=self.logger)
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,                     
                 bnb_4bit_use_double_quant=True,        
                 bnb_4bit_quant_type="nf4",            
                 bnb_4bit_compute_dtype=self.dtype      
             )
-            self.llm = LlamaForCausalLM.from_pretrained(model_path, 
+            self.llm = select_model.from_pretrained(model_path, 
                                                         config=self._llm_config, 
                                                         torch_dtype=self.dtype, 
                                                         low_cpu_mem_usage=True,
                                                         quantization_config=bnb_config,
                                                         )
         else:
-            self.llm = LlamaForCausalLM.from_pretrained(model_path, 
+            self.llm = select_model.from_pretrained(model_path, 
                                             config=self._llm_config, 
                                             torch_dtype=self.dtype, 
                                             )
-            if not self.FLEX:
+            if not self.FLEX :
                 self.llm.model.gradient_checkpointing_enable()
-                self.llm.model.gradient_checkpointing = True
                 print_log("Gradient checkpointing is enabled", logger=self.logger)
         
         if not self.OPENSCENE:
@@ -174,22 +251,26 @@ class AdaptiveLLM(nn.Module):
         '''
         # Extract {TOKEN_NUM} dense tokens per token
         TOKEN_NUM = self._llm_config.DENSE_TOKEN_NUM
-        bs = neighborhood_xyz.shape[0]
-        # Get dense token center in neighborhood [bs, 128, 4, 3]
-        dense_token_center = self._fps(neighborhood_xyz.view(-1, neighborhood_xyz.shape[-2], neighborhood_xyz.shape[-1]), TOKEN_NUM).view(bs, -1, TOKEN_NUM, 3)
-
-        tokenizer = Group(num_group=dense_token_center.shape[-3]*dense_token_center.shape[-2], group_size=neighborhood_xyz.shape[-2])
-        
+        bs = center.shape[0]
+        # 1. Sample the surrounding points of dense point clouds according to the midpoint of sparse point clouds
+        # 2. {TOKEN_NUM} dense tokens that are re-sampled for each sampled point cloud group
+        DENSE_GROUP_SIZE = 1500
+        group_tokenizer = CenterGroup(num_group=center.shape[1], group_size=DENSE_GROUP_SIZE)
         dense_points = data_dict['hd_points']
         dense_features = data_dict['hd_features']
-        
         dense_scene_pointclouds = torch.cat([dense_points, dense_features], dim=-1).contiguous()
-        ## batch_size, num_group, group_size, 768
-        dense_neighborhood, dense_center = tokenizer(dense_scene_pointclouds)
+        dense_neighborhood = group_tokenizer(dense_scene_pointclouds, center) 
+        # # [bsz, 128, DENSE_GROUP_SIZE, 3]
+        # dense_neighborhood_xyz = dense_neighborhood[... , :3]
+        # # [bsz, 128, DENSE_GROUP_SIZE, 768]
+        # dense_neighborhood_fts = dense_neighborhood[... , 3:]
+        tokenizer = Group(num_group=TOKEN_NUM, group_size=int(DENSE_GROUP_SIZE/TOKEN_NUM))
+        dense_token_neighborhood, dense_token_center = tokenizer(dense_neighborhood.view(-1, dense_neighborhood.shape[-2], dense_neighborhood.shape[-1]).contiguous(), normalize=NORM)
+        dense_token_neighborhood = dense_token_neighborhood.view(bs, -1, dense_token_neighborhood.shape[-2], dense_token_neighborhood.shape[-1]).contiguous()
+        dense_token_center = dense_token_center.view(bs, -1, dense_token_center.shape[-1]).contiguous()
+        # [bs, 128*TOKEN_NUM, 768]
+        dense_fts = dense_token_neighborhood[... , 3:].mean(-2)
 
-        # [bs, 128*TOKEN_NUM, 384, 768]
-        dense_fts = dense_neighborhood[... , 3:].mean(-2)
-        
         point_cloud_dims_min, _ = dense_points[..., :3].min(dim=1)
         point_cloud_dims_max, _ = dense_points[..., :3].max(dim=1)
         point_cloud_dims = [
@@ -199,7 +280,7 @@ class AdaptiveLLM(nn.Module):
         
         return {
             # 'dense_points':dense_points, 
-            'dense_center':dense_center,
+            'dense_center':dense_token_center,
             'point_cloud_dims': point_cloud_dims,
             'dense_features':dense_fts.view(bs, -1, TOKEN_NUM, self._encoder_config.trans_dim).contiguous()
         }
@@ -213,10 +294,11 @@ class AdaptiveLLM(nn.Module):
             assert False
     
     def wrap_fsdp(self):
+        
         llama_auto_wrap_policy = functools.partial(
             transformer_auto_wrap_policy,
             transformer_layer_cls={
-                LlamaDecoderLayer,
+                self.llm_layer,
             },
         )
         self.llm = FSDP(self.llm, device_id=torch.cuda.current_device(), auto_wrap_policy=llama_auto_wrap_policy)
@@ -226,6 +308,7 @@ class AdaptiveLLM(nn.Module):
         self.pos_emb3d = self.pos_emb3d.to(torch.cuda.current_device())
         self.box_prompt_projector = self.box_prompt_projector.to(torch.cuda.current_device())
         self.click_prompt_projector = self.click_prompt_projector.to(torch.cuda.current_device())
+
         print_log('Using FSDP')
         return self
     
@@ -268,7 +351,7 @@ class AdaptiveLLM(nn.Module):
     
     def load_model_from_ckpt(self, bert_ckpt_path, args, finetune=False):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
-        ckpt = torch.load(bert_ckpt_path, map_location=map_location)
+        ckpt = torch.load(bert_ckpt_path, map_location='cpu')
         
         # tmp_ckpt = {k:v for k,v in ckpt['base_model'].items() if not k.find('llm.') != -1}
         # ckpt = {'base_model': tmp_ckpt}
@@ -314,7 +397,7 @@ class AdaptiveLLM(nn.Module):
         )
         final_loss = torch.sum(loss_per_word * mask) / torch.sum(mask + 1e-6)
 
-        return final_loss + 0.
+        return final_loss
     
     def expand_prompt_representation(self, prompt_feature, prompt_mask=None):
         # input:
@@ -334,7 +417,6 @@ class AdaptiveLLM(nn.Module):
     
     def forward(self, data_dict, eval=False):
         with torch.no_grad():
-                    
             points = data_dict['points']
             level = data_dict['level']
             features = data_dict['features']
@@ -385,13 +467,16 @@ class AdaptiveLLM(nn.Module):
             all_pos_embed = self.xyz_projection(all_pos_embed.permute(0, 2, 1))
             pos, hd_pos = all_pos_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
             all_vision_embed = torch.cat((vision_embed+pos, hd_vision_embed+hd_pos), dim=1)
+            
+            all_vision_embed = torch.cat((vision_embed, hd_vision_embed), dim=1)
             all_vision_embed = self.encoder_to_llm_projection(all_vision_embed)
             vision_embed, hd_vision_embed = all_vision_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
             hd_vision_embed = hd_vision_embed.to(self.dtype)
             # Set hd corpus for self attention layer
+            # self.llm.config.start_learnable_id = data_dict['start_learnable_id']
             for i in range(len(self.llm.model.layers)):
                 self.llm.model.layers[i].self_attn.hd_features = hd_vision_embed.view(bsz, -1, TN, self._llm_config.hidden_size).contiguous()
-                self.llm.model.layers[i].self_attn.step_ratio = data_dict['step_ratio']
+                self.llm.model.layers[i].self_attn.step_ratio = data_dict.get('step_ratio', None)
         else:
             pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
             pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
@@ -413,19 +498,37 @@ class AdaptiveLLM(nn.Module):
             )
             
             gradient_mask = data_dict['gradient_mask']
+            
+            # if os.getenv('ADD_SCENE_LOSS','False') == 'True':
+            # Add <scene> and </scene> logits to supervision
+            scene_token_start_index = self.llm.config.scene_token_start_index
+            start_scene_logits = outputs.logits[:, scene_token_start_index-1-1]
+            end_scene_logits = outputs.logits[:, scene_token_start_index-1-1+128+1]
+            start_scene_id = torch.tensor([self.tokenizer.convert_tokens_to_ids('<scene>')]).to(input_ids.device).unsqueeze(0).repeat(start_scene_logits.shape[0], 1)
+            end_scene_id = torch.tensor([self.tokenizer.convert_tokens_to_ids('</scene>')]).to(input_ids.device).unsqueeze(0).repeat(start_scene_logits.shape[0], 1)
+            
+            new_logits = torch.cat((outputs.logits[:, -(gradient_mask.shape[1]+1): -1], start_scene_logits.unsqueeze(1), end_scene_logits.unsqueeze(1)), dim=1)
+            new_input_ids = torch.cat((input_ids, start_scene_id, end_scene_id), dim=1)
+            new_gradient_mask = torch.cat((gradient_mask, torch.ones_like(start_scene_id), torch.ones_like(end_scene_id)), dim=1)
             loss = self._loss_caption(
-                logits = outputs.logits[:, -(gradient_mask.shape[1]+1): -1],
-                target = input_ids,
-                mask = gradient_mask.to(self.dtype),
+                logits = new_logits,
+                target = new_input_ids,
+                mask = new_gradient_mask.to(self.dtype),
             )
+            # else:
+            # loss = self._loss_caption(
+            #     logits = outputs.logits[:, -(gradient_mask.shape[1]+1): -1],
+            #     target = input_ids,
+            #     mask = gradient_mask.to(self.dtype),
+            # )
+            
             return loss
         
         else:
-            
             caption_config = {
             'early_stopping': True,
             'eos_token_id': self.tokenizer.eos_token_id,
-            'num_beams': None
+            'num_beams': None   # 4, None
             }
             
             # attentions = [None] * vision_embed.shape[0]
@@ -448,13 +551,14 @@ class AdaptiveLLM(nn.Module):
                     visual_prompt_embeds=prompt_feature[batch_id].unsqueeze(0).to(self.dtype),
                     visual_prompt_mask=prompt_mask[batch_id].unsqueeze(0).to(self.dtype),
                     tokenizer = self.tokenizer,
-                    max_length=128,   
+                    max_length=20,   
                     **caption_config,
                 )
                 output_ids.append(output['output_ids'])
-                if not output['attentions'] is None:
-                    attn = torch.cat(output['attentions'], dim=0)
-                    attentions.append(attn)
+                if caption_config['num_beams'] is None:
+                    if not output['attentions'] is None:
+                        attn = torch.cat(output['attentions'], dim=0)
+                        attentions.append(attn)
             
             output_ids = torch.cat(output_ids, dim=0)
             if len(attentions) > 0:

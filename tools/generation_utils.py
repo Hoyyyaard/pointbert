@@ -63,21 +63,33 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
 def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
     ## prepare inputs
     max_length = kwargs['max_length']
-    inputs_embeds = kwargs['inputs_embeds'] # batch x nwords x channel
     
     # for safety issues
     assert kwargs['num_beams'] is not None, (
         'num_beams should not be provided if calling beam search!'
     )
     nbeams = kwargs['num_beams']
+    input_ids = kwargs.get('input_ids')
+    vision_embeds = kwargs.get('vision_embeds')
+    attention_mask = kwargs.get('attention_mask')
+    vision_mask = kwargs.get('vision_mask')
+    visual_prompt_embeds = kwargs.get('visual_prompt_embeds')
+    visual_prompt_mask = kwargs.get('visual_prompt_mask')
     
-    batch, prefix_length, channel = inputs_embeds.shape
+    batch, prefix_length = input_ids.shape
+    channel = vision_embeds.shape[-1]
+    
     # batch x nbeams x length x channel
-    expanded_inputs_embeds = inputs_embeds.unsqueeze(1).repeat(1, nbeams, 1, 1)
+    expanded_input_ids = input_ids.unsqueeze(1).repeat(1, nbeams, 1, 1)
+    expanded_vision_embeds = vision_embeds.repeat(nbeams, 1, 1)
+    expanded_attention_mask = attention_mask.unsqueeze(1).repeat(1, nbeams, 1)
+    expanded_vision_mask = vision_mask.repeat(nbeams, 1)
+    expanded_visual_prompt_embeds = visual_prompt_embeds.repeat(nbeams, 1, 1)
+    expanded_visual_prompt_mask = visual_prompt_mask.repeat(nbeams, 1)
     
     ## prepare storage
-    output_scores = torch.zeros(batch, nbeams).to(inputs_embeds.device)
-    output_ids = torch.ones(batch, nbeams, max_length).to(inputs_embeds.device)
+    output_scores = torch.zeros(batch, nbeams).to(input_ids.device)
+    output_ids = torch.ones(batch, nbeams, max_length).to(input_ids.device)
     output_ids = output_ids * kwargs['eos_token_id']
     batch_beam_results = OrderedDict({
         batch_id: [
@@ -85,15 +97,19 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
                 for b in range(nbeams)] \
                     for batch_id in range(batch)
     })
-    embedding_layer = transformer.get_input_embeddings()
     
     for word_id in range(max_length):
         
         if word_id == 0:    # cold start for the first generation step
         
             step_output = transformer(
-                inputs_embeds=inputs_embeds,
-                output_attentions=False,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                vision_embeds=vision_embeds,
+                vision_mask=vision_mask,
+                visual_prompt_embeds=visual_prompt_embeds,
+                visual_prompt_mask=visual_prompt_mask,
+                tokenizer=kwargs['tokenizer'],
             )
             # topk inds
             topk_scores, topk_inds = step_output.logits[:, -1, :].topk(
@@ -110,12 +126,17 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
             generated_words = output_ids[..., :word_id]
             
             # batch x nbeams x (length + word_id) x channel
-            temporal_inputs = torch.cat((expanded_inputs_embeds, embedding_layer(generated_words.long())), dim=2)
+            temporal_input_ids = torch.cat((expanded_input_ids, generated_words.long().unsqueeze(-2)), dim=-1)
+            temporal_attention_mask = torch.cat((expanded_attention_mask, torch.ones(batch, nbeams, generated_words.shape[-1]).to(attention_mask.device)), dim=-1)
             
             step_output = transformer(
-                inputs_embeds=temporal_inputs.reshape(
-                    batch * nbeams, prefix_length + word_id, channel
-                ),
+                input_ids=temporal_input_ids.reshape(batch * nbeams, prefix_length + word_id),
+                attention_mask=temporal_attention_mask.reshape(batch * nbeams, prefix_length + word_id),
+                vision_embeds=expanded_vision_embeds,
+                vision_mask=expanded_vision_mask,
+                visual_prompt_embeds=expanded_visual_prompt_embeds,
+                visual_prompt_mask=expanded_visual_prompt_mask ,
+                tokenizer=kwargs['tokenizer'],
                 output_attentions=False,
             )
             last_word_logits = step_output.logits[:, -1, :].reshape(

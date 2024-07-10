@@ -54,7 +54,7 @@ wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
-    --sync_bn \
-    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-2wpts.yaml \
-    --exp_name Exp0039_0628_AddSceneLoss_LL3daHDData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_From[Scratch] \
-    --resume
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-test-FLEX-threshold1.yaml \
+    --exp_name Exp0069_0709_HdWoAugBbox_FlexWarmUp20_FlexThreshold127_From[Scratch]_Epoch4 \
+    --ckpt experiments/Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD/MultiScale_models/Exp0069_0709_HdWoAugBbox_FlexWarmUp20_FlexThreshold127_From[Scratch]/ckpt-epoch-003.pth\
+    --test 

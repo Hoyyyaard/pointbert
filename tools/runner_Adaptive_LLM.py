@@ -141,6 +141,11 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             print_log('Training from scratch', logger = logger)
     # print(torch.cuda.memory_summary())
 
+    if not test and not finetune:
+        optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
+        for n, p in base_model.llm.named_parameters():
+            p.requires_grad = True
+    
     # DDP
     if args.distributed:
         # Sync BN
@@ -167,7 +172,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         # scaler = amp.GradScaler()
         
         # optimizer & scheduler
-        optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
+        if finetune:
+            optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
         
         if args.resume:
             builder.resume_optimizer(optimizer, args, logger = logger)
@@ -214,11 +220,10 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                             assert False
 
                 data_time.update(time.time() - batch_start_time)
-
-                # with amp.autocast():
-                loss = torch.zeros(1)[0].cuda()
                 data_dict['step_ratio'] = n_itr / total_iter
-                loss += base_model(data_dict)
+                
+                # with amp.autocast():
+                loss = base_model(data_dict)
                 
                 dist.all_reduce(loss, op=dist.ReduceOp.SUM)
                 loss = loss / dist.get_world_size() 
@@ -233,8 +238,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                 
                 loss.backward()
                 curr_nan_times = 0
-            
-                torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=1)
+
+                if 'clip_grad_norm' in os.environ.keys():
+                    torch.nn.utils.clip_grad_norm_(parameters=base_model.parameters(), max_norm=1)
                     
                 # forward
                 if num_iter == config.step_per_update:
@@ -290,6 +296,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
             builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
 
+            torch.distributed.barrier()
+            exit()
+            
         if train_writer is not None:
             train_writer.close()
         if val_writer is not None:
@@ -395,6 +404,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
     '''
         attentions : [bs, 32, 32, seq len, seq len]
     '''
+    base_model = base_model.module if hasattr(base_model, 'module') else base_model
     # Import
     from models.dvae import knn_point
     import matplotlib.pyplot as plt
@@ -409,14 +419,18 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
     answer = answers[0].replace(' ', '_')
     
     output_len = (output_ids[0] != 2).sum().item()
-    input_len = 128 + (data_dict['instruction_mask'][0] == 1).sum().item()
+    # input_len = 128 + (data_dict['instruction_mask'][0] == 1).sum().item()
+    # len(inputs_ids) - <scene_placehold> - <vp_placehold> + scene_embedding + vp_embedding
+    input_len = (data_dict['instruction_mask'][0] == 1).sum().item() - 1 - 1 + 128 + 16
     valid_len = input_len + output_len
+    scene_token_start_index = base_model.llm.config.scene_token_start_index
+    scene_token_end_index = scene_token_start_index + 128
     attentions = attentions[0, : ,: ,:valid_len, :valid_len] # [32, 32, valid_len, valid_len]
     # Viualize the attention map
     plt.figure(figsize=(20, 20))
     for ii, layer in enumerate(range(len(attentions[0]))):
         mean_attn = attentions[layer][:, input_len:].sum(0).detach().cpu() # [1, xx]
-        mean_attn = mean_attn[:, :128].numpy()
+        mean_attn = mean_attn[:, scene_token_start_index:scene_token_end_index].numpy()
         min_vals = mean_attn.min(axis=1, keepdims=True)
         max_vals = mean_attn.max(axis=1, keepdims=True)
         mean_attn = (mean_attn - min_vals) / (max_vals - min_vals)
@@ -510,11 +524,19 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             
             output_ids = outputs["output_ids"]  # batch x max_length
             # if not finetune:
-            answers = base_model.module.tokenizer.batch_decode(
-                output_ids,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False
-            )
+            if hasattr(base_model, 'tokenizer'):
+                answers = base_model.tokenizer.batch_decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )
+            else:
+                answers = base_model.module.tokenizer.batch_decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False
+                )
+            
             print(answers)
             # else:
             #     answers = base_model.tokenizer.batch_decode(

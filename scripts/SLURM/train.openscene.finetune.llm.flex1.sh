@@ -55,6 +55,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --sync_bn \
-    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-2wpts.yaml \
-    --exp_name Exp0039_0628_AddSceneLoss_LL3daHDData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_From[Scratch] \
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-FLEX-threshold.yaml \
+    --exp_name Exp0048_0703_FixXyzNorm_FlexLayer08_FlexThreshold127_Warmup20_LL3daData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_From[Scratch] \
     --resume

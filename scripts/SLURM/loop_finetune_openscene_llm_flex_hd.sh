@@ -1,8 +1,8 @@
-NUM_GPUS_PER_NODE=${2:-6}
-NUM_NODES=${3:-10}
+NUM_GPUS_PER_NODE=${2:-5}
+NUM_NODES=${3:-16}
 JOB_ID=${4:-"allm"}
 LOOP_COUNTER=0
-SCRIPT=${1:-"/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/scripts/SLURM/train.openscene.finetune.llm.flex.sh"}
+SCRIPT=${1:-"/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/scripts/SLURM/train.openscene.finetune.llm.flex.hd.sh"}
 
 while true; do
     echo "Loop counter: $LOOP_COUNTER"

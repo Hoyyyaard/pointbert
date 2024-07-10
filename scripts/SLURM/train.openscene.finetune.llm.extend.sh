@@ -56,5 +56,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm  \
     --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-Extend.yaml  \
-    --exp_name Exp0009_0613_LL3daData_TokenMask_AddPos_DetPrompt_FP32_SyBN_From[Scratch] \
+    --exp_name Exp0034_0626_AddSceneLoss_LL3daData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_From[Scratch] \
     --resume
