@@ -14,29 +14,24 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset-2wpts.yaml, 
             others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
-  val : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset-2wpts.yaml, 
             others: {subset: 'val', shuffle: False}}}
 model : {
   NAME: Openscene, 
 
   DTYPE: FP16,
-  distributed: FSDP,  # DDP, FSDP
-
-  FLEX: True,
-  DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 64,
-  # DENSE_TOKEN_SELECT_TOPK: 10,
+  distributed: DDP,  # DDP, FSDP
 
   quantization: False, 
 
   trans_dim: 768,
 
   use_openscene: True,
-  N_POINTS: 40000,
+  N_POINTS: 20000,
   NUM_GROUP: 128,
-  GROUP_SIZE: 384, 
+  GROUP_SIZE: 192, 
 
   REGION_N_POINTS: 8192,
   REGION_NUM_GROUP : 8,

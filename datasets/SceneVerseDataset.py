@@ -160,22 +160,22 @@ TASK_PROMPT = {
     ],
     'hd_scene_qa': [
         dict(
-            instruction='### human: given the multi-rooms 3D scene, answer the question: "{question}" ### assistant:',
+            instruction='### human: based on the 3D scene with multiple rooms, answer the question: "{question}" ### assistant:',
             answer='{answer}',
             do_localize=False
         ),
         dict(
-            instruction='### human: answer this quesiton according to the given multi-rooms 3D scene: "{question}" ### assistant:',
+            instruction='### human: answer this question based on the provided multi-room 3D scene: "{question}" ### assistant:',
             answer='{answer}',
             do_localize=False
         ),
         dict(
-            instruction='### human: answer the question: "{question}" with the related object locations in the input multi-rooms 3D scene. ### assistant:',
+            instruction='### human: answer the question: "{question}" using the relevant object locations from the provided multi-room 3D scene. ### assistant:',
             answer='the answer is: {answer}, and the related objects are localized at {locations}',
             do_localize=True
         ),
         dict(
-            instruction='### human: given the multi-rooms 3D scene, localize all the related objects first, then answer the question: "{question}" ### assistant:',
+            instruction='### human: given the multi-room 3D scene, first locate all the relevant objects, then answer the question: "{question}" ### assistant:',
             answer='the related objects are localized at {locations}, the answer is: {answer}',
             do_localize=True
         ),
@@ -1366,9 +1366,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         
         # Load part 2 task: object caption and object grounding from all scans of sceneverse
         ## Note that we only keep the scannet part for eval
-        region_aug_data_dir = 'data/SceneVerse/RegionAugData'
-        region_aug_pcd = os.listdir(region_aug_data_dir)
-        region_aug_pcd = {p:[] for p in region_aug_pcd}
+        # region_aug_data_dir = 'data/SceneVerse/RegionAugData'
+        # region_aug_pcd = os.listdir(region_aug_data_dir)
+        # region_aug_pcd = {p:[] for p in region_aug_pcd}
         self.all_object_caption = []
         object_caption_anno_name = 'ssg_obj_caption_gpt.json'
         for dn in _all_dataset_name:
@@ -1840,12 +1840,12 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             
             question = anno['question']
             
-            # if self.config.subset == 'train' and len(object_points) > 0:
-            #     boxes = convert_objectpoints_to_bbox_str(points, object_points)
-            #     prompt = deepcopy(random.choice(TASK_PROMPT['scene_qa'])) if not self.config.differ_prompt else deepcopy(random.choice(TASK_PROMPT['hd_scene_qa']))
-            # else:
-            prompt = deepcopy(TASK_PROMPT['scene_qa'][0]) if not self.config.differ_prompt else deepcopy(TASK_PROMPT['hd_scene_qa'][0])
-            boxes = ''
+            if self.config.subset == 'train' and len(object_points) > 0:
+                boxes = convert_objectpoints_to_bbox_str(points, object_points)
+                prompt = deepcopy(random.choice(TASK_PROMPT[task_name])) if self.config.differ_prompt else deepcopy(random.choice(TASK_PROMPT['scene_qa']))
+            else:
+                prompt = deepcopy(TASK_PROMPT[task_name][0]) if self.config.differ_prompt else deepcopy(TASK_PROMPT['scene_qa'][0])
+                boxes = ''
             
             intruction = prompt['instruction'].format(locations=boxes, question=question)
             # Add special token 
@@ -2015,7 +2015,7 @@ class HD_Hm3dQADataset(Dataset):
                                             "scan_name":scan_name, 
                                             'instance_room_id': epi['scan_id'].split('_')[-1],
                                             "anno":anno, 
-                                            "task_name": "scene_qa",
+                                            "task_name": "hd_scene_qa",
                                             'region_id': qa['region_id'],
                                             'episode_id':'{}#{}#{}#{}'.format('HM3D', scan_name, qa['region_id'], qa['question'])
                                             })
@@ -2023,7 +2023,7 @@ class HD_Hm3dQADataset(Dataset):
         
         # Prepare corpus for evaluation
         self.corpus = {
-            'scene_qa': copy.deepcopy(self.all_scene_qa),
+            'hd_scene_qa': copy.deepcopy(self.all_scene_qa),
         }
         
     def _load_scan(self, pcd_path, inst2label_path, scan_name):
@@ -2137,7 +2137,7 @@ class HD_Hm3dQADataset(Dataset):
         }
         
         question = anno['question']
-        prompt = deepcopy(TASK_PROMPT['scene_qa'][0]) if not self.config.differ_prompt else deepcopy(TASK_PROMPT['hd_scene_qa'][0])
+        prompt = deepcopy(TASK_PROMPT[task_name][0]) if self.config.differ_prompt else deepcopy(TASK_PROMPT['scene_qa'][0])
         boxes = ''
         intruction = prompt['instruction'].format(locations=boxes, question=question)
         # Add special token 

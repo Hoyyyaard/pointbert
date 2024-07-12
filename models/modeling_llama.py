@@ -485,7 +485,7 @@ class LlamaAttention(nn.Module):
             # if self.training:
             # As 1/self.warm_up will be used to warm up
             self.warm_up = self.config.FLEX_WARM_UP
-            alpha = min(1.0, self.warm_up * self.step_ratio) if self.training else 1.0
+            alpha = min(1.0, self.warm_up * self.step_ratio) if self.training and not self.warm_up == -1 else 1.0
             select_mask_list = []
             for ib in range(attn_weights.shape[0]):
                 mask = torch.zeros(attn_output.shape[2], device=attn_output.device).bool()

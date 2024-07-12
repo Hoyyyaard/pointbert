@@ -15,9 +15,9 @@ scheduler: {
 
 dataset : {
   train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, wohd: True}},
   val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
-            others: {subset: 'val', shuffle: False}}}
+            others: {subset: 'val', shuffle: False, wohd: True}}}
 model : {
   NAME: Openscene, 
 

@@ -24,7 +24,7 @@ model : {
   DTYPE: FP16,
   distributed: DDP,  # DDP, FSDP
 
-  quantization: True, 
+  quantization: False, 
 
   trans_dim: 768,
 
@@ -45,7 +45,7 @@ model : {
 }
 
 finetune : True
-total_bs : 1
+total_bs : 6
 step_per_update : 1
 max_epoch : 5
 

@@ -55,6 +55,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-test-FLEX-threshold1.yaml \
-    --exp_name Exp0069_0709_HdWoAugBbox_FlexWarmUp20_FlexThreshold127_From[Scratch]_Epoch4 \
-    --ckpt experiments/Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD/MultiScale_models/Exp0069_0709_HdWoAugBbox_FlexWarmUp20_FlexThreshold127_From[Scratch]/ckpt-epoch-003.pth\
+    --exp_name Exp0080_0711_WHdAugBbox_WoDiffPrompt_FlexWarmUp5_FlexThreshold96_From[Scratch]_Epoch4 \
+    --ckpt experiments/Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD/MultiScale_models/Exp0080_0711_WHdAugBbox_WoDiffPrompt_FlexWarmUp5_FlexThreshold96_From[Scratch]/ckpt-epoch-003.pth\
     --test 

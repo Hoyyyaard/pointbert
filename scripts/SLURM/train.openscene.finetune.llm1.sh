@@ -57,5 +57,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm \
     --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-HD.yaml \
-    --exp_name Exp0073_0710_SeqLen256_WoClipNorm_WSceneLoss_WHdBboxAug_ReproduceExp0035_From[Scratch] \
+    --exp_name Exp0073_0710_SeqLen256_WoClipNorm_WSceneLoss_WHdBboxAug_WDiffPrompt_ReproduceExp0035_From[Scratch] \
     --resume

@@ -15,9 +15,9 @@ scheduler: {
 
 dataset : {
   train : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, differ_prompt: True}},
   val : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
-            others: {subset: 'val', shuffle: False}}}
+            others: {subset: 'val', shuffle: False, differ_prompt: True}}}
 model : {
   NAME: Openscene, 
 
