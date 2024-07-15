@@ -226,6 +226,9 @@ def save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_met
                 all_weight_ckpt['pos_emb3d.{}'.format(k)] = v
             for k,v in base_model.xyz_projection.state_dict().items():
                 all_weight_ckpt['xyz_projection.{}'.format(k)] = v
+            if base_model.USE_QFORMER:
+                for k,v in base_model.qformer_interface.state_dict().items():
+                    all_weight_ckpt['qformer_interface.{}'.format(k)] = v
         torch.save({
                     'base_model' : all_weight_ckpt,
                     'optimizer' : optimizer.state_dict(),

@@ -25,9 +25,57 @@ import os
 from utils.logger import *
 from pointnet2_ops import pointnet2_utils
 from tools.position_embedding import PositionEmbeddingCoordsSine
-
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM, 
+    InstructBlipQFormerModel,
+    InstructBlipQFormerConfig
+)
 
 NORM = True 
+
+class Qformer_Interface(nn.Module):
+    def __init__(self, llm_config):
+        super(Qformer_Interface, self).__init__()
+        qformer_config = InstructBlipQFormerConfig(
+            num_hidden_layers=6,
+            encoder_hidden_size=llm_config.hidden_size,
+            hidden_size=llm_config.hidden_size,
+            num_attention_heads=8
+        )
+        self.qformer = InstructBlipQFormerModel.from_pretrained(
+            'bert-base-uncased', 
+            config=qformer_config,
+            ignore_mismatched_sizes=True
+        )
+        self.nlatent_query = 32
+        self.qformer_hidden_size = llm_config.hidden_size
+        self.latent_query = nn.Embedding(self.nlatent_query, self.qformer_hidden_size)
+        self.qformer_to_llm_projection = nn.Linear(self.qformer_hidden_size, self.qformer_hidden_size)
+
+ 
+    def forward(self, vision_embed, data_dict):
+        batch_size = vision_embed.shape[0]
+        query_tokens = self.latent_query.weight.unsqueeze(0).repeat(batch_size, 1, 1)
+        query_attention_mask = torch.ones(batch_size, self.nlatent_query).to(vision_embed.device)
+        
+        # prepare qformer inputs: batch x ntoken x n_embd
+        query_attention_mask = torch.cat((query_attention_mask, data_dict['qformer_instruction_mask']), dim=1)
+        
+        query_outputs = self.qformer(
+            input_ids=data_dict['qformer_instruction'],
+            attention_mask=query_attention_mask,
+            query_embeds=query_tokens,
+            encoder_hidden_states=vision_embed,
+            output_attentions=True
+        )
+        
+        x_attns = query_outputs.cross_attentions
+        query_outputs_latent = query_outputs[0][:, : self.nlatent_query, :]
+        q_vision_features = self.qformer_to_llm_projection(query_outputs_latent)
+        q_vision_mask = torch.ones(batch_size, self.nlatent_query).to(vision_embed.device)
+        return q_vision_features, q_vision_mask, x_attns
+
 
 class OpensceneEncoder(nn.Module):
     def __init__(self, encoder_config):
@@ -129,6 +177,13 @@ class AdaptiveLLM(nn.Module):
         self.args = args
         self.finetune = finetune
         
+        self.USE_QFORMER = hasattr(self._encoder_config, 'USE_QFORMER')
+        self._llm_config.USE_QFORMER = self.USE_QFORMER
+        print_log("USE_QFORMER: {}".format(self.USE_QFORMER), self.logger)
+        if self.USE_QFORMER:
+            self.qformer_interface = Qformer_Interface(self._llm_config)
+            self._llm_config.QUERY_TO_VISISON_TOKEN_TOPK = self._encoder_config.QUERY_TO_VISISON_TOKEN_TOPK
+
         self.FLEX = hasattr(self._encoder_config, 'FLEX')
         self._llm_config.FLEX = self.FLEX
         self._llm_config.DENSE_TOKEN_NUM = self._encoder_config.DENSE_TOKEN_NUM if hasattr(self._encoder_config, 'DENSE_TOKEN_NUM') else None
@@ -154,8 +209,8 @@ class AdaptiveLLM(nn.Module):
         else:
             self._llm_config.ONLY_ANS_FLEX = False
             
-        self.VISION_TOKEN_NUM = self._encoder_config.NUM_GROUP
-        self._llm_config.VISION_TOKEN_NUM = self._encoder_config.NUM_GROUP
+        self.VISION_TOKEN_NUM = self._encoder_config.NUM_GROUP if not self.USE_QFORMER else 32
+        self._llm_config.VISION_TOKEN_NUM = self.VISION_TOKEN_NUM
         
         model_path = 'ckpts/Llama-2-7b-hf'
         if hasattr(self._encoder_config,"LLAVA"):
@@ -310,7 +365,8 @@ class AdaptiveLLM(nn.Module):
         self.pos_emb3d = self.pos_emb3d.to(torch.cuda.current_device())
         self.box_prompt_projector = self.box_prompt_projector.to(torch.cuda.current_device())
         self.click_prompt_projector = self.click_prompt_projector.to(torch.cuda.current_device())
-
+        if self.USE_QFORMER:
+            self.qformer_interface = self.qformer_interface.to(torch.cuda.current_device())
         print_log('Using FSDP')
         return self
     
@@ -484,6 +540,13 @@ class AdaptiveLLM(nn.Module):
             pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
             vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
         
+        if self.USE_QFORMER:
+            assert torch.all(vision_mask == 1)
+            vision_embed, vision_mask, x_attns = self.qformer_interface(vision_embed, data_dict)
+            if self.FLEX:
+                for i in range(len(self.llm.model.layers)):
+                    self.llm.model.layers[i].self_attn.qformer_x_attns = x_attns
+
         if not eval:
             input_mask = data_dict['attention_mask']
             input_ids = data_dict['input_ids']

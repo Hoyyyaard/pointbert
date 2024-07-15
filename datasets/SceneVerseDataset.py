@@ -1267,6 +1267,9 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = 'right'
+        self.qtokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        self.qtokenizer.pad_token = self.tokenizer.eos_token
+        self.qtokenizer.padding_side = 'right'
         
         self.wohd = config.get('wohd', False)
         self.config = config
@@ -1733,6 +1736,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 prompt = deepcopy(TASK_PROMPT[task_name][0])
                 boxes = ''
             intruction = prompt['instruction'].format(locations=boxes, question=question)
+
+            qformer_prompt = self.qtokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            ret_dict['qformer_instruction'] = qformer_prompt['input_ids'][0].astype(np.int64)
+            ret_dict['qformer_instruction_mask'] = qformer_prompt['attention_mask'][0].astype(np.float32)
+
             # Add special token 
             intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
@@ -1756,6 +1764,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         # Scene Caption
         elif task_name == 'scene_understanding':
             intruction = anno['question']
+
+            qformer_prompt = self.qtokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            ret_dict['qformer_instruction'] = qformer_prompt['input_ids'][0].astype(np.int64)
+            ret_dict['qformer_instruction_mask'] = qformer_prompt['attention_mask'][0].astype(np.float32)
+
             intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             
@@ -1805,6 +1818,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 prompt = deepcopy(TASK_PROMPT[task_name][0])
     
             intruction = prompt['instruction']
+
+            qformer_prompt = self.qtokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            ret_dict['qformer_instruction'] = qformer_prompt['input_ids'][0].astype(np.int64)
+            ret_dict['qformer_instruction_mask'] = qformer_prompt['attention_mask'][0].astype(np.float32)
+
             intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
             caption = anno['utterance'] if 'utterance' in anno else anno['answers'][0]
@@ -1848,6 +1866,11 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 boxes = ''
             
             intruction = prompt['instruction'].format(locations=boxes, question=question)
+            
+            qformer_prompt = self.qtokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            ret_dict['qformer_instruction'] = qformer_prompt['input_ids'][0].astype(np.int64)
+            ret_dict['qformer_instruction_mask'] = qformer_prompt['attention_mask'][0].astype(np.float32)
+            
             # Add special token 
             intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
@@ -1967,6 +1990,9 @@ class HD_Hm3dQADataset(Dataset):
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = 'right'
+        self.qtokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        self.qtokenizer.pad_token = self.tokenizer.eos_token
+        self.qtokenizer.padding_side = 'right'
         
         self.config = config
         
@@ -2146,6 +2172,11 @@ class HD_Hm3dQADataset(Dataset):
         prompt = deepcopy(TASK_PROMPT[task_name][0]) if self.config.differ_prompt else deepcopy(TASK_PROMPT['scene_qa'][0])
         boxes = ''
         intruction = prompt['instruction'].format(locations=boxes, question=question)
+
+        qformer_prompt = self.qtokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+        ret_dict['qformer_instruction'] = qformer_prompt['input_ids'][0].astype(np.int64)
+        ret_dict['qformer_instruction_mask'] = qformer_prompt['attention_mask'][0].astype(np.float32)
+
         # Add special token 
         intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
         prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)

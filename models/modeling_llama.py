@@ -444,7 +444,8 @@ class LlamaAttention(nn.Module):
             key_hd_features = key_hd_features.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             value_hd_features = value_hd_features.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
             # k_embed = (k * cos) + (rotate_half(k) * sin)
-            key_hd_features = (key_hd_features * hd_cos) + (rotate_half(key_hd_features) * hd_sin)
+            if not self.config.USE_QFORMER:
+                key_hd_features = (key_hd_features * hd_cos) + (rotate_half(key_hd_features) * hd_sin)
             key_states = torch.cat([key_states, key_hd_features], dim=2)
             value_states = torch.cat([value_states, value_hd_features], dim=2)
             
@@ -544,13 +545,15 @@ class LlamaAttention(nn.Module):
                     # else:
                     select_mask[start_learnable_seq_id[0]:, :] = expand_normalized_attention_weight
                     select_mask_list.append(select_mask.bool())
-            else:
+            elif self.config.USE_QFORMER:
                 topk = self.config.DENSE_TOKEN_SELECT_TOPK
                 # scene_token_attention_weight = nn.functional.softmax(scene_token_attention_weight, dim=-1)
-                # Get topk index
+                # [bsz, seq_len, topk]
                 topk_index = torch.topk(scene_token_attention_weight, topk, dim=-1)[1]
                 for bi in range(attn_weights.shape[0]):
-                    select_mask =  torch.zeros(attn_weights.shape[-2], self.config.VISION_TOKEN_NUM*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    # We need to generate the mask for hd vision tokens so the vision
+                    # token num will be 128 instead of self.config.VISION_TOKEN_NUM(32)
+                    select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
                     # As padding tokens will not deal with the flex attention
                     # if not self.training:
                     #     # Only deal with the last token
@@ -562,12 +565,17 @@ class LlamaAttention(nn.Module):
                     #         dense_token_start_idx = int(tidx * self.config.DENSE_TOKEN_NUM)
                     #         select_mask[seq_id][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
                     # else:
+                    # Select the last cross attention weight of qformer and sum in head
+                    x_attns = self.qformer_x_attns[bi][-1].sum(0)
                     for seq_id in range(start_learnable_seq_id[bi], end_learnable_seq_id[bi]+1):
                         if not self.training:
                             assert end_learnable_seq_id[bi]+1 == attn_weights.shape[-2], "{} v.s. {}".format(end_learnable_seq_id[bi]+1, attn_weights.shape[-2])
                         for tidx in topk_index[bi][seq_id-start_learnable_seq_id[0]]:
-                            dense_token_start_idx = int(tidx * self.config.DENSE_TOKEN_NUM)
-                            select_mask[seq_id][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
+                            x_attn_per_query = x_attns[tidx]
+                            query_topk_index = torch.topk(x_attn_per_query, self.config.QUERY_TO_VISISON_TOKEN_TOPK, dim=-1)[1]
+                            for qtidx in query_topk_index:
+                                dense_token_start_idx = int(qtidx * self.config.DENSE_TOKEN_NUM)
+                                select_mask[seq_id][dense_token_start_idx: dense_token_start_idx+self.config.DENSE_TOKEN_NUM] = 1.0
                     select_mask_list.append(select_mask.bool())
 
         if not output_attentions:
