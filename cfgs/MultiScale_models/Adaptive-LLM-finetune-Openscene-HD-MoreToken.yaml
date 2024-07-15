@@ -14,10 +14,10 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, vocab: 'ckpts/Llama-2-7b-hf', differ_prompt: True}},
-  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
-            others: {subset: 'val', shuffle: False, vocab: 'ckpts/Llama-2-7b-hf'}}}
+  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHDMoreToken.yaml, 
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, wohd: True, differ_prompt: True}},
+  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHDMoreToken.yaml, 
+            others: {subset: 'val', shuffle: False, wohd: True}}}
 model : {
   NAME: Openscene, 
 
@@ -25,20 +25,12 @@ model : {
   distributed: FSDP,  # DDP, FSDP
   quantization: False, 
 
-  FLEX: True,
-  DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 127,
-  # DENSE_TOKEN_SELECT_TOPK: 10,
-  FLEX_WARM_UP: -1,
-  ONLY_ANS_FLEX: False,
-  START_FLEX_LAYER: 8, 
-
   trans_dim: 768,
 
   use_openscene: True,
-  N_POINTS: 40000,
-  NUM_GROUP: 128,
-  GROUP_SIZE: 384, 
+  N_POINTS: 80000,
+  NUM_GROUP: 512,
+  GROUP_SIZE: 192, 
 
   REGION_N_POINTS: 8192,
   REGION_NUM_GROUP : 8,
@@ -52,7 +44,7 @@ model : {
 }
 
 finetune : True
-total_bs : 120
+total_bs : 150
 step_per_update : 1
 max_epoch : 5
 

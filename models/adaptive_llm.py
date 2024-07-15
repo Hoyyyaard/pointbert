@@ -153,7 +153,9 @@ class AdaptiveLLM(nn.Module):
             self._llm_config.ONLY_ANS_FLEX = self._encoder_config.ONLY_ANS_FLEX
         else:
             self._llm_config.ONLY_ANS_FLEX = False
-        
+            
+        self.VISION_TOKEN_NUM = self._encoder_config.NUM_GROUP
+        self._llm_config.VISION_TOKEN_NUM = self._encoder_config.NUM_GROUP
         
         model_path = 'ckpts/Llama-2-7b-hf'
         if hasattr(self._encoder_config,"LLAVA"):
@@ -503,7 +505,7 @@ class AdaptiveLLM(nn.Module):
             # Add <scene> and </scene> logits to supervision
             scene_token_start_index = self.llm.config.scene_token_start_index
             start_scene_logits = outputs.logits[:, scene_token_start_index-1-1]
-            end_scene_logits = outputs.logits[:, scene_token_start_index-1-1+128+1]
+            end_scene_logits = outputs.logits[:, scene_token_start_index-1-1+self.VISION_TOKEN_NUM+1]
             start_scene_id = torch.tensor([self.tokenizer.convert_tokens_to_ids('<scene>')]).to(input_ids.device).unsqueeze(0).repeat(start_scene_logits.shape[0], 1)
             end_scene_id = torch.tensor([self.tokenizer.convert_tokens_to_ids('</scene>')]).to(input_ids.device).unsqueeze(0).repeat(start_scene_logits.shape[0], 1)
             

@@ -432,8 +432,8 @@ class LlamaAttention(nn.Module):
                 self.hd_features = self.hd_features.repeat(bsz, 1, 1, 1)
             hd_features = self.hd_features.view(bsz, -1, self.hidden_size)
             # As hd_features will be has the same position embedding as the hidden_states
-            hd_cos = cos[scene_token_start_index: scene_token_start_index+128].repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=0)
-            hd_sin = sin[scene_token_start_index: scene_token_start_index+128].repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=0)
+            hd_cos = cos[scene_token_start_index: scene_token_start_index+self.config.VISION_TOKEN_NUM].repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=0)
+            hd_sin = sin[scene_token_start_index: scene_token_start_index+self.config.VISION_TOKEN_NUM].repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=0)
             # if not self.training:
             #     # For eval we only deal with the last and valid hd tokens
             #     hd_features = hd_features[:, last_select_mask_list[0][-1], :]
@@ -525,18 +525,19 @@ class LlamaAttention(nn.Module):
             global_attention_weight = torch.sum(attn_weights, dim=1).detach()
             # Mean in head dimension: [bsz, seq_len, seq_len]
             # start_learnable_seq_id[0] as the start_learnable_seq_id is the same for all batch
-            scene_token_attention_weight = global_attention_weight[:, start_learnable_seq_id[0]:, :][:, :, scene_token_start_index: scene_token_start_index+128]
+            scene_token_attention_weight = global_attention_weight[:, start_learnable_seq_id[0]:, :][:, :, scene_token_start_index: scene_token_start_index+self.config.VISION_TOKEN_NUM]
             if hasattr(self.config, 'DENSE_TOKEN_SELECT_THRESHOLD'):
                 threshold = self.config.DENSE_TOKEN_SELECT_THRESHOLD
                 for bi in range(attn_weights.shape[0]):
                     scene_token_attention_weight_per_batch = scene_token_attention_weight[bi]
-                    select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    select_mask =  torch.zeros(attn_weights.shape[-2], self.config.VISION_TOKEN_NUM*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
                     # As padding tokens will not deal with the flex attention
                     min_vals = scene_token_attention_weight_per_batch.min(dim=1, keepdim=True).values
                     max_vals = scene_token_attention_weight_per_batch.max(dim=1, keepdim=True).values
                     normalized_attention_weight = (scene_token_attention_weight_per_batch - min_vals) / (max_vals - min_vals)
-                    # [learnable_seq_len, 128]
+                    # [learnable_seq_len, self.config.VISION_TOKEN_NUM]
                     normalized_attention_weight = ((normalized_attention_weight * 255) > threshold).bool()
+                    # print(normalized_attention_weight.sum(dim=1)[-1])
                     expand_normalized_attention_weight = normalized_attention_weight.repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=-1)
                     # if not self.training:
                     #     select_mask[-1, :] = expand_normalized_attention_weight[-1]
@@ -549,7 +550,7 @@ class LlamaAttention(nn.Module):
                 # Get topk index
                 topk_index = torch.topk(scene_token_attention_weight, topk, dim=-1)[1]
                 for bi in range(attn_weights.shape[0]):
-                    select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    select_mask =  torch.zeros(attn_weights.shape[-2], self.config.VISION_TOKEN_NUM*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
                     # As padding tokens will not deal with the flex attention
                     # if not self.training:
                     #     # Only deal with the last token
@@ -1329,7 +1330,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             #     batch_start_learnable_id = self.config.start_learnable_id
             #     # -1 Indicates that flex attn is to be executed for one token before the token generation begins
             #     start_learnable_id = batch_start_learnable_id[bi].item() - 1
-            #     vision_token_len = 128
+            #     vision_token_len = self.config.VISION_TOKEN_NUM
             #     vp_token_len = visual_prompt_embeds.shape[1]
             #     scene_placehold_len = 1
             #     vp_placehold_len = 1 

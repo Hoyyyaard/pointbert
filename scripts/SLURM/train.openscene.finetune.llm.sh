@@ -57,6 +57,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --sync_bn \
-    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene.yaml \
-    --exp_name Exp0072_0709_SeqLen256_WoClipNorm_WSceneLoss_ReproduceExp0030_From[Scratch] \
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-HD-MoreToken.yaml \
+    --exp_name Exp0084_0713_SeqLen256_WoClipNorm_WSceneLoss_WHdBboxAug_WDiffPrompt_From[Scratch] \
     --resume

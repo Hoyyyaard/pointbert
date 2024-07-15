@@ -26,7 +26,7 @@ model : {
 
   FLEX: True,
   DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 96,
+  DENSE_TOKEN_SELECT_THRESHOLD: 127,
   ONLY_ANS_FLEX: False,
 
   quantization: False, 

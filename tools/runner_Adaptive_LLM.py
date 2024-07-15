@@ -141,10 +141,10 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             print_log('Training from scratch', logger = logger)
     # print(torch.cuda.memory_summary())
 
-    if not test and not finetune:
-        optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
-        for n, p in base_model.llm.named_parameters():
-            p.requires_grad = True
+    # if not test and not finetune:
+    #     optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
+    #     for n, p in base_model.llm.named_parameters():
+    #         p.requires_grad = True
     
     # DDP
     if args.distributed:
@@ -156,8 +156,9 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         base_model = base_model.wrap_model()
 
     else:
-        print_log('Using Data parallel ...' , logger = logger)
-        base_model = nn.DataParallel(base_model).cuda()
+        # print_log('Using Data parallel ...' , logger = logger)
+        # base_model = nn.DataParallel(base_model).cuda()
+        base_model = base_model.cuda()
 
     # Train
     if not test :
@@ -172,8 +173,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         # scaler = amp.GradScaler()
         
         # optimizer & scheduler
-        if finetune:
-            optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
+        # if finetune:
+        optimizer, scheduler = builder.build_llm_opti_sche(base_model, config, train_dataloader, finetune)
         
         if args.resume:
             builder.resume_optimizer(optimizer, args, logger = logger)
@@ -292,9 +293,10 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
 
             print_log('[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s' %
                 (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)
-
-            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
-            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
+            if epoch <= 3:
+                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
+            if epoch > 1 :
+                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
 
             torch.distributed.barrier()
             exit()
@@ -377,7 +379,7 @@ def convert_pcd_to_image(pointcloud, color):
     ax.axis('off')
     
     # Filter the 5% highest points
-    z_max = np.percentile(pointcloud[:, 2], 90)
+    z_max = np.percentile(pointcloud[:, 2], 70)
     mask = pointcloud[:, 2] <= z_max
     pointcloud = pointcloud[mask]
     # pointcloud = pc_norm(pointcloud)
@@ -439,7 +441,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
         plt.imshow(mean_attn, alpha=0.7, cmap='rainbow',aspect='auto')
         plt.title(str(ii))
     plt.tight_layout()
-    plt.savefig("vis_attn_sparse_pretrain/attention_map_{}_{}.png".format(unique_id, answer))    
+    plt.savefig("vis_attn_Exp0081E4/attention_map_{}_{}.png".format(unique_id, answer))    
     plt.close()
             
     for idx in range(output_len):
@@ -453,7 +455,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
             pbar.update(1)
             
             mean_attn = attentions[layer][:,idx+input_len].sum(0).detach().cpu().unsqueeze(0) # [1, xx]
-            mean_attn = mean_attn[:, :128].numpy()
+            mean_attn = mean_attn[:, scene_token_start_index:scene_token_end_index].numpy()
             # print('max index in output {}:'.format(idx), mean_attn.argmax())
             min_vals = mean_attn.min(axis=1, keepdims=True)
             max_vals = mean_attn.max(axis=1, keepdims=True)
@@ -479,21 +481,41 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
             axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
             # axs[x[0], y[0]].title(str(ii))
         
-        dense_pcd = torch.load('data/SceneVerse/ScanNet/scan_data/pcd_with_global_alignment/{}.pth'.format(data_dict['scan_name'][0]))
-        pointclouds, colors = dense_pcd[0], dense_pcd[1]
-        colors = colors / 255
-        pcd_img = convert_pcd_to_image(pointclouds, colors)
-        x, y = np.where(idx_map==ii+1)
-        axs[x[0], y[0]].axis('off')
-        axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
-        
+        # hm3d qa
+        if 'hd_colors' in data_dict.keys():
+            pointclouds = data_dict['hd_points'][0].cpu().numpy()
+            colors = data_dict['hd_colors'][0].cpu().numpy()
+            colors = colors / 255
+            pcd_img = convert_pcd_to_image(pointclouds, colors)
+            x, y = np.where(idx_map==ii+1)
+            axs[x[0], y[0]].axis('off')
+            axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
+            
+            instance_labels = data_dict['hd_instance_labels'][0].cpu().numpy()
+            tgt_id = data_dict['tgt_id'][0].item()
+            colors[instance_labels != tgt_id] = [0.5, 0.5, 0.5]
+            pcd_img = convert_pcd_to_image(pointclouds, colors)
+            x, y = np.where(idx_map==ii+2)
+            axs[x[0], y[0]].axis('off')
+            axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
+        else:
+            dense_pcd = torch.load('data/SceneVerse/ScanNet/scan_data/pcd_with_global_alignment/{}.pth'.format(data_dict['scan_name'][0]))
+            pointclouds, colors = dense_pcd[0], dense_pcd[1]
+            colors = colors / 255
+            pcd_img = convert_pcd_to_image(pointclouds, colors)
+            x, y = np.where(idx_map==ii+1)
+            axs[x[0], y[0]].axis('off')
+            axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
+            
         fig.tight_layout()
-        fig.savefig("vis_attn_sparse_pretrain/{}_{}_{}.png".format(idx, unique_id, answer))    
+        fig.savefig("vis_attn_Exp0081E4/{}_{}_{}.png".format(idx, unique_id, answer))    
 
 def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None, finetune=False):
     print_log(f"[VALIDATION] Start validating epoch {epoch}", logger = logger)
     base_model.eval()  # set model to eval mode
     
+    if args.visualization_attn:
+        pred_corpus = json.load(open("ckpts/Exp0081E4.json"))
     # if not finetune:
     candidates = {}
     test_pbar = tqdm(total = len(test_dataloader))

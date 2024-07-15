@@ -42,7 +42,7 @@ echo "MASTER_PORT: $MASTER_PORT"
 
 if [ $FLAG -eq 1 ]; then
     NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK --max_restarts 5"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
 else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
@@ -56,5 +56,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm \
     --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-FLEX-threshold.yaml \
-    --exp_name Exp0052_0704_WoXyz_WoClickPrompt_FlexLayer08_FlexThreshold127_Warmup20_From[Scratch] \
+    --exp_name Exp0088_DiffPrompt_FlexWarmUp-1_FlexThreshold127_From[Scratch] \
     --resume

@@ -2104,7 +2104,7 @@ class HD_Hm3dQADataset(Dataset):
 
         # Get HD Info
         N = 160000
-        hd_points, hd_features, hd_colors, hd_instance_lables = down_sample(points, features, colors, instance_labels, npoint=N)
+        hd_points, hd_features, hd_colors, hd_instance_labels = down_sample(points, features, colors, instance_labels, npoint=N)
         
         # Viusalization code  
         # print(inst_to_label[instance_room_id][tgt_id])
@@ -2134,7 +2134,13 @@ class HD_Hm3dQADataset(Dataset):
             'click_mask': click_mask.astype(np.float32),
             'box_mask': box_mask.astype(np.float32),
             'box_query': box_query.astype(np.float32),
+            
         }
+        
+        if self.config.vis:
+            ret_dict['hd_colors'] = hd_colors.astype(np.float32)
+            ret_dict['hd_instance_labels'] = hd_instance_labels.astype(np.int64)
+            ret_dict['tgt_id'] = tgt_id
         
         question = anno['question']
         prompt = deepcopy(TASK_PROMPT[task_name][0]) if self.config.differ_prompt else deepcopy(TASK_PROMPT['scene_qa'][0])

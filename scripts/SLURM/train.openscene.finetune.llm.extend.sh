@@ -42,7 +42,7 @@ echo "MASTER_PORT: $MASTER_PORT"
 
 if [ $FLAG -eq 1 ]; then
     NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK --max_restarts 5"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
 else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
@@ -55,6 +55,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm  \
     --sync_bn \
-    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-Extend.yaml  \
-    --exp_name Exp0034_0626_AddSceneLoss_LL3daData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_From[Scratch] \
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-Extend-HD.yaml  \
+    --exp_name Exp0085_0714_WoRscanQA_WHdAugBbox_DiffPrompt_FlexWarmUp-1_FlexThreshold96_From[Scratch] \
     --resume
