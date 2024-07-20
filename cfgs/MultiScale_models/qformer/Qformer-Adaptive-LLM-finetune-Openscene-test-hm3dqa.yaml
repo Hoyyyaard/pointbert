@@ -14,21 +14,18 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
-  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDataset.yaml, 
-            others: {subset: 'val', shuffle: False , differ_prompt: True}}}
+  train : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, differ_prompt: True}},
+  val : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+            others: {subset: 'val', shuffle: False, differ_prompt: True}}}
 model : {
   NAME: Openscene, 
 
-  DTYPE: FP32,
-  distributed: FSDP,  # DDP, FSDP
+  USE_QFORMER: True,
+  QUERY_TO_VISISON_TOKEN_TOPK: 4,
+  DTYPE: FP16,
+  distributed: DDP,  # DDP, FSDP
 
-  FLEX: True,
-  DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 127,
-  ONLY_ANS_FLEX: False,
-  START_FLEX_LAYER: 8,
   quantization: False, 
 
   trans_dim: 768,
@@ -50,11 +47,9 @@ model : {
 }
 
 finetune : True
-total_bs : 30
+total_bs : 6
 step_per_update : 1
 max_epoch : 5
 
 consider_metric: CDL1
-
-
 

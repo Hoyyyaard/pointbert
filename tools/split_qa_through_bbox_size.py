@@ -71,7 +71,10 @@ for scene_qa in tqdm(all_scene_qa):
         
     area_size = np.max(points, 0) - np.min(points, 0)
     area_size = area_size[0] * area_size[1]
-    area_sizes[scan_name] = area_size
+    area_sizes[scan_name] = area_size.tolist()
+
+with open('scanqa.json', 'w') as f:
+    json.dump(area_sizes, f)
 
 area_sizes = list(area_sizes.values())
 scannet_avg_area_size = sum(area_sizes)/len(area_sizes)
@@ -80,7 +83,7 @@ print('Scannet scan average area size: {}'.format(scannet_avg_area_size))
 # with open('data/SceneVerse/meta_data/ScanQA_Bbox_Small_Than-{}_Val.json'.format(BBOX_THRES), 'w') as f:
 #     json.dump(small_unique_epi_ids, f)
 
-visualization(area_sizes, "scanqa.png")
+# visualization(area_sizes, "scanqa.png")
     
     
 # ------------------------------------------------ HD hm3d qa -----------------------------------------
@@ -145,11 +148,14 @@ for data in tqdm(all_scene_qa):
         # print('{} size:{}'.format(anno['instance_type'], object_sizes))
     area_size = np.max(points, 0) - np.min(points, 0)
     area_size = area_size[0] * area_size[1]
-    area_sizes[region_id] = area_size
-    
+    area_sizes[region_id] = area_size.tolist()
+
+with open('hm3dxrqa.json', 'w') as f:
+    json.dump(area_sizes, f)
+
 area_sizes = list(area_sizes.values())
 print('Hm3d scan average area size: {}'.format(sum(area_sizes)/len(area_sizes)))
 print('small_unique_epi_ids:', len(small_unique_epi_ids))
 # with open('data/SceneVerse/meta_data/HDHm3dQA_Bbox_Small_Than-{}_Val.json'.format(BBOX_THRES), 'w') as f:
 #     json.dump(small_unique_epi_ids, f)
-visualization(area_sizes, "hm3dqa.png")
+# visualization(area_sizes, "hm3dqa.png")

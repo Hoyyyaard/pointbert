@@ -1,8 +1,8 @@
 optimizer : {
   type: Adam,
   kwargs: {
-  lr : 0.00001, 
-  weight_decay : 0,
+  lr : 0.000005, 
+  weight_decay : 0.05,
 
 }}
 
@@ -14,27 +14,25 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHD.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, vocab: 'ckpts/Llama-2-7b-hf', differ_prompt: True}},
-  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHD.yaml, 
-            others: {subset: 'val', shuffle: False, vocab: 'ckpts/Llama-2-7b-hf'}}}
+  train : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True}},
+  val : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+            others: {subset: 'val', shuffle: False , differ_prompt: True}}}
 model : {
   NAME: Openscene, 
 
   DTYPE: FP32,
   distributed: FSDP,  # DDP, FSDP
-  quantization: False, 
-
+  
   USE_QFORMER: True,
   QUERY_TO_VISISON_TOKEN_TOPK: 4,
   FLEX: True,
   DENSE_TOKEN_NUM: 4,
-  # DENSE_TOKEN_SELECT_THRESHOLD: 96,
-  DENSE_TOKEN_SELECT_TOPK: 10,
-  START_FLEX_LAYER: 8,
-  FLEX_WARM_UP: -1,
+  DENSE_TOKEN_SELECT_TOPK: 6,
   ONLY_ANS_FLEX: False,
-  
+  START_FLEX_LAYER: 8,
+  quantization: False, 
+
   trans_dim: 768,
 
   use_openscene: True,
@@ -54,7 +52,7 @@ model : {
 }
 
 finetune : True
-total_bs : 240
+total_bs : 30
 step_per_update : 1
 max_epoch : 5
 

@@ -55,6 +55,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --sync_bn \
-    --config Adaptive-LLM-finetune-Openscene-FLEX-threshold-2wpts.yaml \
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-FLEX-threshold-2wpts.yaml \
     --exp_name Exp0089_DiffPrompt_FlexWarmUp-1_FlexThreshold127_From[Scratch] \
     --resume

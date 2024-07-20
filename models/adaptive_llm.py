@@ -35,23 +35,23 @@ from transformers import (
 NORM = True 
 
 class Qformer_Interface(nn.Module):
-    def __init__(self, llm_config):
+    def __init__(self, encoder_hidden_state, llm_config):
         super(Qformer_Interface, self).__init__()
         qformer_config = InstructBlipQFormerConfig(
             num_hidden_layers=6,
-            encoder_hidden_size=llm_config.hidden_size,
-            hidden_size=llm_config.hidden_size,
-            num_attention_heads=8
+            encoder_hidden_size=encoder_hidden_state,
+            # hidden_size=llm_config.hidden_size,
+            # num_attention_heads=8
         )
         self.qformer = InstructBlipQFormerModel.from_pretrained(
-            'bert-base-uncased', 
+            'ckpts/bert-base-uncased', 
             config=qformer_config,
             ignore_mismatched_sizes=True
         )
         self.nlatent_query = 32
-        self.qformer_hidden_size = llm_config.hidden_size
+        self.qformer_hidden_size = encoder_hidden_state
         self.latent_query = nn.Embedding(self.nlatent_query, self.qformer_hidden_size)
-        self.qformer_to_llm_projection = nn.Linear(self.qformer_hidden_size, self.qformer_hidden_size)
+        self.qformer_to_llm_projection = nn.Linear(encoder_hidden_state, llm_config.hidden_size)
 
  
     def forward(self, vision_embed, data_dict):
@@ -181,7 +181,7 @@ class AdaptiveLLM(nn.Module):
         self._llm_config.USE_QFORMER = self.USE_QFORMER
         print_log("USE_QFORMER: {}".format(self.USE_QFORMER), self.logger)
         if self.USE_QFORMER:
-            self.qformer_interface = Qformer_Interface(self._llm_config)
+            self.qformer_interface = Qformer_Interface(self._encoder_config.trans_dim, self._llm_config)
             self._llm_config.QUERY_TO_VISISON_TOKEN_TOPK = self._encoder_config.QUERY_TO_VISISON_TOKEN_TOPK
 
         self.FLEX = hasattr(self._encoder_config, 'FLEX')
@@ -278,20 +278,35 @@ class AdaptiveLLM(nn.Module):
             normalize=True
         )
         
+        if not self.USE_QFORMER:
         # Given xyz and token mask version
-        self.xyz_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
-            nn.ReLU(),
-            nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
-        )
-        
-        self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
-            nn.ReLU(),
-            nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
-            nn.ReLU(),
-            nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
-        )
+            self.xyz_projection = nn.Sequential(
+                nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+                nn.ReLU(),
+                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+            )
+            
+            self.encoder_to_llm_projection = nn.Sequential(
+                nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+            )
+        else:
+            self.xyz_projection = nn.Sequential(
+                nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+                nn.ReLU(),
+                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+            )
+            
+            self.encoder_to_llm_projection = nn.Sequential(
+                nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+                nn.ReLU(),
+                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+                nn.ReLU(),
+                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+            )
 
     def _fps(self, points, number):
         '''
@@ -532,6 +547,8 @@ class AdaptiveLLM(nn.Module):
             hd_vision_embed = hd_vision_embed.to(self.dtype)
             # Set hd corpus for self attention layer
             # self.llm.config.start_learnable_id = data_dict['start_learnable_id']
+            if self.USE_QFORMER:
+                hd_vision_embed = self.qformer_interface.qformer_to_llm_projection(hd_vision_embed)
             for i in range(len(self.llm.model.layers)):
                 self.llm.model.layers[i].self_attn.hd_features = hd_vision_embed.view(bsz, -1, TN, self._llm_config.hidden_size).contiguous()
                 self.llm.model.layers[i].self_attn.step_ratio = data_dict.get('step_ratio', None)
