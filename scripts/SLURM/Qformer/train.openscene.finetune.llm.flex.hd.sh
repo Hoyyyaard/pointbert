@@ -56,6 +56,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --sync_bn \
-    --config cfgs/MultiScale_models/qformer/Qformer-Adaptive-LLM-finetune-Openscene-FLEX-TopK-HD.yaml \
-    --exp_name Exp0093_0716_WHdAugBbox_DiffPrompt_FlexWarmUp100_Topk4_10_From[Scratch] \
+    --config cfgs/MultiScale_models/qformer/Qformer-Adaptive-LLM-finetune-Openscene-FLEX-QueryProb-threshold-HD.yaml \
+    --exp_name Exp0093_0720_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold96_QueryProb_QformerAttnLayer0_From[Scratch] \
     --resume

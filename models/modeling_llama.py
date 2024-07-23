@@ -530,8 +530,22 @@ class LlamaAttention(nn.Module):
             if hasattr(self.config, 'DENSE_TOKEN_SELECT_THRESHOLD'):
                 threshold = self.config.DENSE_TOKEN_SELECT_THRESHOLD
                 for bi in range(attn_weights.shape[0]):
-                    scene_token_attention_weight_per_batch = scene_token_attention_weight[bi]
-                    select_mask =  torch.zeros(attn_weights.shape[-2], self.config.VISION_TOKEN_NUM*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    if self.config.USE_QFORMER:
+                        x_attns = self.qformer_x_attns[bi][0].sum(0) # [32,128]
+                        # Norm to 0-1 
+                        x_attns_min_vals = torch.min(x_attns, dim=-1, keepdim=True).values
+                        x_attns_max_vals = torch.max(x_attns, dim=-1, keepdim=True).values
+                        x_attns = (x_attns - x_attns_min_vals) / (x_attns_max_vals - x_attns_min_vals)
+                        scene_token_attention_weight_per_batch = scene_token_attention_weight[bi]
+                        scene_token_attention_weight_per_batch = torch.nn.functional.softmax(scene_token_attention_weight_per_batch.float(), dim=-1).to(x_attns.device).to(x_attns.dtype)
+                        scene_token_attention_weight_per_batch = scene_token_attention_weight_per_batch @ x_attns
+                        # We need to generate the mask for hd vision tokens so the vision
+                        # token num will be 128 instead of self.config.VISION_TOKEN_NUM(32)
+                        select_mask =  torch.zeros(attn_weights.shape[-2], 128*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    else:
+                        scene_token_attention_weight_per_batch = scene_token_attention_weight[bi]
+                        select_mask =  torch.zeros(attn_weights.shape[-2], self.config.VISION_TOKEN_NUM*self.config.DENSE_TOKEN_NUM, device=attn_output.device, dtype=attn_output.dtype)
+                    
                     # As padding tokens will not deal with the flex attention
                     min_vals = scene_token_attention_weight_per_batch.min(dim=1, keepdim=True).values
                     max_vals = scene_token_attention_weight_per_batch.max(dim=1, keepdim=True).values

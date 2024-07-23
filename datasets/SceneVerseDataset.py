@@ -1277,6 +1277,10 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         if not hasattr(self.config, 'differ_prompt'):
             self.config.differ_prompt = False
         
+        self.USE_OBJECTCENTRIC = config.get('USE_OBJECTCENTRIC', False)
+        if self.USE_OBJECTCENTRIC:
+            self.room_label_offset = 10000
+        
         self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
         self.VP_TOKEN = '<vp_placehold>'
         
@@ -1622,6 +1626,33 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             instance_labels = dict['instance_labels'].numpy()
         return points, colors, features, instance_labels, inst_to_label
     
+    def proc_object_tokens_for_objectcentric(self, points, features, instance_labels):
+        object_tokens = []
+        center = []
+        for label in np.unique(instance_labels):
+            if label <=0 :
+                continue
+            mask = instance_labels == label
+            object_points = points[mask]
+            object_features = features[mask]
+            center.append(object_points.mean(0))
+            object_tokens.append(object_features.mean(0))
+        center = np.array(center)
+        object_tokens = np.array(object_tokens)
+        if len(object_tokens) <= self._num_groups:
+            # pad to group size
+            pad_size = self._num_groups - len(object_tokens)
+            object_mask = np.concatenate([np.ones(len(object_tokens)), np.zeros(pad_size)], 0)
+            object_tokens = np.concatenate([object_tokens, np.zeros((pad_size, object_tokens.shape[-1]))], 0)
+            center = np.concatenate([center, np.zeros((pad_size, center.shape[-1]))], 0)
+        else:
+            object_mask = np.ones(len(object_tokens))
+            object_tokens = object_tokens[:self._num_groups]
+            center = center[:self._num_groups]
+            object_mask = object_mask[:self._num_groups]
+
+        return object_tokens, center, object_mask
+
     def __len__(self):
         return len(self.order_episodes)
     
@@ -1653,7 +1684,10 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                 if room_id == instance_room_id:
                     instance_labels.extend(ils)
                 else:
-                    instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
+                    if self.USE_OBJECTCENTRIC:
+                        instance_labels.extend(ils+self.room_label_offset)
+                    else:
+                        instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
                 inst_to_label[room_id] = itl
             points = np.array(points)
             points = pc_norm(points)
@@ -1672,14 +1706,20 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         # Get HD Info
         N = 160000
         if not self.wohd:
-            hd_points, hd_features, _, _ = down_sample(points, features, npoint=N)
+            hd_points, hd_features, hd_instance_labels, _ = down_sample(points, features, instance_labels, npoint=N)
             hd_points = hd_points.astype(np.float32)
             hd_features = hd_features.astype(np.float32)
+            hd_obj_tokens, hd_obj_center, hd_obj_mask = self.proc_object_tokens_for_objectcentric(hd_points, hd_features, hd_instance_labels)
         else:
             hd_points = None
             hd_features = None
+            hd_obj_tokens = None
+            hd_obj_center = None
+            hd_obj_mask = None
+
         points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
-        
+        obj_tokens, obj_center, obj_mask = self.proc_object_tokens_for_objectcentric(points, features, instance_labels)
+
         ret_dict = {
             'num_groups': self._num_groups,
             'group_size': self._group_size,
@@ -1695,10 +1735,19 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             'points': points.astype(np.float32),
             'colors': colors.astype(np.float32),
         }
+
+        if self.USE_OBJECTCENTRIC:
+            ret_dict['obj_tokens'] = obj_tokens.astype(np.float32)
+            ret_dict['obj_center'] = obj_center.astype(np.float32)
+            ret_dict['obj_mask'] = obj_mask.astype(np.float32)
         
         if not self.wohd:
             ret_dict['hd_points'] = hd_points
             ret_dict['hd_features'] = hd_features
+            if self.USE_OBJECTCENTRIC:
+                ret_dict['hd_obj_tokens'] = hd_obj_tokens.astype(np.float32)
+                ret_dict['hd_obj_center'] = hd_obj_center.astype(np.float32)
+                ret_dict['hd_obj_mask'] = hd_obj_mask.astype(np.float32)
         
         if self.OPENSCENE:
             ret_dict['features'] = features

@@ -182,7 +182,11 @@ class AdaptiveLLM(nn.Module):
         print_log("USE_QFORMER: {}".format(self.USE_QFORMER), self.logger)
         if self.USE_QFORMER:
             self.qformer_interface = Qformer_Interface(self._encoder_config.trans_dim, self._llm_config)
-            self._llm_config.QUERY_TO_VISISON_TOKEN_TOPK = self._encoder_config.QUERY_TO_VISISON_TOKEN_TOPK
+            if hasattr(self._encoder_config, "QUERY_TO_VISISON_TOKEN_TOPK"):
+                self._llm_config.QUERY_TO_VISISON_TOKEN_TOPK = self._encoder_config.QUERY_TO_VISISON_TOKEN_TOPK
+        self.USE_OBJECTCENTRIC = hasattr(self._encoder_config, 'USE_OBJECTCENTRIC')
+        self._llm_config.USE_OBJECTCENTRIC = self.USE_OBJECTCENTRIC
+        print_log("USE_OBJECTCENTRIC: {}".format(self.USE_OBJECTCENTRIC), self.logger)
 
         self.FLEX = hasattr(self._encoder_config, 'FLEX')
         self._llm_config.FLEX = self.FLEX
@@ -493,7 +497,10 @@ class AdaptiveLLM(nn.Module):
             points = data_dict['points']
             level = data_dict['level']
             features = data_dict['features']
-            vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, features, level)
+            if self.USE_OBJECTCENTRIC:
+                vision_embed, vision_mask, center = data_dict['obj_tokens'], data_dict['obj_mask'], data_dict['obj_center']
+            else:
+                vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, features, level)
                 
         # Visual prompt code
         batch_size = vision_embed.shape[0]
@@ -525,13 +532,24 @@ class AdaptiveLLM(nn.Module):
         ## concat box and click prompts as well as prompt masks
         prompt_feature = torch.cat(visual_prompt, dim=1)   # batch x (2 x ntoken) x channel
         prompt_mask = torch.cat(visual_mask, dim=1)        # batch x (2 x ntoken)
-            
         if self.FLEX:
-            hd_corpus = self._get_hd_corpus(data_dict, center, neighborhood_xyz)
-            hd_center = hd_corpus['dense_center']
-            hd_point_cloud_dims = hd_corpus['point_cloud_dims']
-            hd_vision_embed = hd_corpus['dense_features']
-            bsz, _, TN, dim = hd_vision_embed.shape
+            if self.USE_OBJECTCENTRIC:
+                hd_center = center.clone()
+                hd_vision_embed = data_dict['hd_obj_tokens'].unsqueeze(2)
+                point_cloud_dims_min, _ = data_dict['hd_points'][..., :3].min(dim=1)
+                point_cloud_dims_max, _ = data_dict['hd_points'][..., :3].max(dim=1)
+                hd_point_cloud_dims = [
+                    point_cloud_dims_min,
+                    point_cloud_dims_max,
+                ]
+            else:
+                hd_corpus = self._get_hd_corpus(data_dict, center, neighborhood_xyz)
+                hd_center = hd_corpus['dense_center']
+                hd_point_cloud_dims = hd_corpus['point_cloud_dims']
+                hd_vision_embed = hd_corpus['dense_features']
+            bsz, _, tn, dim = hd_vision_embed.shape
+            TN = self._encoder_config.DENSE_TOKEN_NUM
+            assert tn == TN
             hd_vision_embed = hd_vision_embed.view(bsz, -1, dim).contiguous()
             
             hd_pos_embed = self.pos_emb3d(hd_center, input_range=hd_point_cloud_dims)
@@ -633,7 +651,7 @@ class AdaptiveLLM(nn.Module):
                     visual_prompt_embeds=prompt_feature[batch_id].unsqueeze(0).to(self.dtype),
                     visual_prompt_mask=prompt_mask[batch_id].unsqueeze(0).to(self.dtype),
                     tokenizer = self.tokenizer,
-                    max_length=20,   
+                    max_length=128,   
                     **caption_config,
                 )
                 output_ids.append(output['output_ids'])

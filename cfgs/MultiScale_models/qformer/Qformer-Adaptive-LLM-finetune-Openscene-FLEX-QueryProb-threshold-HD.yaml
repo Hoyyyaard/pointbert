@@ -25,10 +25,10 @@ model : {
   distributed: FSDP,  # DDP, FSDP
   quantization: False, 
 
+  USE_QFORMER: True,
   FLEX: True,
   DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 64,
-  # DENSE_TOKEN_SELECT_TOPK: 10,
+  DENSE_TOKEN_SELECT_THRESHOLD: 96,
   START_FLEX_LAYER: 8,
   FLEX_WARM_UP: -1,
   ONLY_ANS_FLEX: False,
@@ -52,7 +52,7 @@ model : {
 }
 
 finetune : True
-total_bs : 160
+total_bs : 240
 step_per_update : 1
 max_epoch : 5
 

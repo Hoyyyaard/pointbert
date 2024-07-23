@@ -14,10 +14,13 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHD.yaml, 
-            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, vocab: 'ckpts/Llama-2-7b-hf', differ_prompt: True}},
-  val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHD.yaml, 
-            others: {subset: 'val', shuffle: False, vocab: 'ckpts/Llama-2-7b-hf'}}}
+  train : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+            others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, 
+            vocab: 'ckpts/Llama-2-7b-hf', 
+            differ_prompt: True,
+            USE_OBJECTCENTRIC: True,}},
+  val : { _base_: cfgs/dataset_configs/HD_Hm3dQADataset.yaml, 
+            others: {subset: 'val', shuffle: False, vocab: 'ckpts/Llama-2-7b-hf',differ_prompt: True,USE_OBJECTCENTRIC: True}}}
 model : {
   NAME: Openscene, 
 
@@ -25,9 +28,11 @@ model : {
   distributed: FSDP,  # DDP, FSDP
   quantization: False, 
 
+  USE_OBJECTCENTRIC: True,
+
   FLEX: True,
-  DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 64,
+  DENSE_TOKEN_NUM: 1,
+  DENSE_TOKEN_SELECT_THRESHOLD: 127,
   # DENSE_TOKEN_SELECT_TOPK: 10,
   START_FLEX_LAYER: 8,
   FLEX_WARM_UP: -1,
@@ -52,7 +57,7 @@ model : {
 }
 
 finetune : True
-total_bs : 160
+total_bs : 30
 step_per_update : 1
 max_epoch : 5
 

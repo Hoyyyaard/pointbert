@@ -42,7 +42,7 @@ echo "MASTER_PORT: $MASTER_PORT"
 
 if [ $FLAG -eq 1 ]; then
     NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK --max_restarts 5"
+    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK "
 else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
@@ -51,10 +51,11 @@ source /gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/etc/profile.d/conda
 conda activate ll3da
 wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 
+
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
-    --config cfgs/MultiScale_models/qformer/Qformer-Adaptive-LLM-finetune-Openscene-test-FLEX-QueryProb-threshold-HD-hm3dqa.yaml \
-    --exp_name Exp0093_0720_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold96_QueryProb_QformerAttnLayer0_From[Scratch]_Epoch4 \
-    --ckpt experiments/Qformer-Adaptive-LLM-finetune-Openscene-FLEX-QueryProb-threshold-HD/qformer/Exp0093_0720_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold96_QueryProb_QformerAttnLayer0_From[Scratch]/ckpt-epoch-003.pth\
-    --test 
+    --sync_bn \
+    --config cfgs/MultiScale_models/objectcentric/ObjectCentric-Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD.yaml \
+    --exp_name Exp0097_0722_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold127_From[Scratch] \
+    --resume
