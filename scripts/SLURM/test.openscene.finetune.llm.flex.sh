@@ -54,7 +54,7 @@ wandb login 2a1e24aab284649d73b3ed748679b099c73ae980
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
-    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-test-FLEX-threshold.yaml \
-    --exp_name Exp0032_0626_FLEX_AddSceneLoss_LL3daData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_FlexThreshold127_From[Scratch]_Epoch4_1 \
-    --ckpt experiments/Adaptive-LLM-finetune-Openscene-FLEX-threshold/MultiScale_models/Exp0032_0626_FLEX_AddSceneLoss_LL3daData_LL3DAVisualPrompt_AddLL3DAPos_LL3DAandSystemPrompt_VisualSpecialToken_FlexThreshold127_From[Scratch]/ckpt-epoch-003.pth\
+    --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-test-FLEX-threshold-hm3dqa.yaml \
+    --exp_name Exp0102_0724_WHdAugBbox_WoDiffPrompt_FlexWarmUp-1_FlexThreshold96_DenseTokenNum2_From[Scratch]_Epoch4 \
+    --ckpt experiments/Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD/MultiScale_models/Exp0102_0724_WHdAugBbox_WoDiffPrompt_FlexWarmUp-1_FlexThreshold96_DenseTokenNum2_From[Scratch]/ckpt-epoch-003.pth\
     --test 

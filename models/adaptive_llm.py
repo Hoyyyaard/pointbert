@@ -37,6 +37,7 @@ NORM = True
 class Qformer_Interface(nn.Module):
     def __init__(self, encoder_hidden_state, llm_config):
         super(Qformer_Interface, self).__init__()
+        
         qformer_config = InstructBlipQFormerConfig(
             num_hidden_layers=6,
             encoder_hidden_size=encoder_hidden_state,
@@ -44,15 +45,29 @@ class Qformer_Interface(nn.Module):
             # num_attention_heads=8
         )
         self.qformer = InstructBlipQFormerModel.from_pretrained(
-            'ckpts/bert-base-uncased', 
+            'ckpts/bert-base-embedding', 
             config=qformer_config,
-            ignore_mismatched_sizes=True
+            # ignore_mismatched_sizes=True
         )
         self.nlatent_query = 32
-        self.qformer_hidden_size = encoder_hidden_state
+        self.qformer_hidden_size = qformer_config.hidden_size
         self.latent_query = nn.Embedding(self.nlatent_query, self.qformer_hidden_size)
-        self.qformer_to_llm_projection = nn.Linear(encoder_hidden_state, llm_config.hidden_size)
-
+        self.qformer_to_llm_projection = nn.Linear(self.qformer_hidden_size, llm_config.hidden_size)
+        if llm_config.FLEX:
+            self.hd_qformer_to_llm_projection = nn.Linear(encoder_hidden_state, llm_config.hidden_size)
+        
+        ll3da_weight = torch.load("ckpts/ll3da_llama.pth", map_location='cpu')['model']
+        qformer_weight = {}
+        proj_weight = {}
+        for k, v in ll3da_weight.items():
+            if k.find('captioner.qformer.') != -1:
+                qformer_weight[k.replace('captioner.qformer.', '')] = v
+            elif k.find('captioner.qformer_to_language_projection.') != -1:
+                proj_weight[k.replace('captioner.qformer_to_language_projection.', '')] = v    
+        msg = self.qformer.load_state_dict(qformer_weight)
+        print_log(msg)
+        msg = self.qformer_to_llm_projection.load_state_dict(proj_weight)
+        print_log(msg)
  
     def forward(self, vision_embed, data_dict):
         batch_size = vision_embed.shape[0]
@@ -177,19 +192,19 @@ class AdaptiveLLM(nn.Module):
         self.args = args
         self.finetune = finetune
         
+        self.FLEX = hasattr(self._encoder_config, 'FLEX')
+        self._llm_config.FLEX = self.FLEX
         self.USE_QFORMER = hasattr(self._encoder_config, 'USE_QFORMER')
         self._llm_config.USE_QFORMER = self.USE_QFORMER
         print_log("USE_QFORMER: {}".format(self.USE_QFORMER), self.logger)
         if self.USE_QFORMER:
-            self.qformer_interface = Qformer_Interface(self._encoder_config.trans_dim, self._llm_config)
+            self.qformer_interface = Qformer_Interface(256, self._llm_config)
             if hasattr(self._encoder_config, "QUERY_TO_VISISON_TOKEN_TOPK"):
                 self._llm_config.QUERY_TO_VISISON_TOKEN_TOPK = self._encoder_config.QUERY_TO_VISISON_TOKEN_TOPK
         self.USE_OBJECTCENTRIC = hasattr(self._encoder_config, 'USE_OBJECTCENTRIC')
         self._llm_config.USE_OBJECTCENTRIC = self.USE_OBJECTCENTRIC
         print_log("USE_OBJECTCENTRIC: {}".format(self.USE_OBJECTCENTRIC), self.logger)
 
-        self.FLEX = hasattr(self._encoder_config, 'FLEX')
-        self._llm_config.FLEX = self.FLEX
         self._llm_config.DENSE_TOKEN_NUM = self._encoder_config.DENSE_TOKEN_NUM if hasattr(self._encoder_config, 'DENSE_TOKEN_NUM') else None
         if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_THRESHOLD'):
             print_log("DENSE_TOKEN_SELECT_THRESHOLD is set to {}".format(self._encoder_config.DENSE_TOKEN_SELECT_THRESHOLD), logger=self.logger)
@@ -215,6 +230,9 @@ class AdaptiveLLM(nn.Module):
             
         self.VISION_TOKEN_NUM = self._encoder_config.NUM_GROUP if not self.USE_QFORMER else 32
         self._llm_config.VISION_TOKEN_NUM = self.VISION_TOKEN_NUM
+        
+        self._llm_config.SELECT_STRATEGY = self._encoder_config.SELECT_STRATEGY if hasattr(self._encoder_config, 'SELECT_STRATEGY') else 'NORMAL'
+        print_log("SELECT_STRATEGY is set to {}".format(self._llm_config.SELECT_STRATEGY), logger=self.logger)
         
         model_path = 'ckpts/Llama-2-7b-hf'
         if hasattr(self._encoder_config,"LLAVA"):
@@ -304,12 +322,19 @@ class AdaptiveLLM(nn.Module):
                 nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
             )
             
+            # self.encoder_to_llm_projection = nn.Sequential(
+            #     nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+            #     nn.ReLU(),
+            #     nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+            #     nn.ReLU(),
+            #     nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+            # )
             self.encoder_to_llm_projection = nn.Sequential(
-                nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+                nn.Linear(self._encoder_config.trans_dim , 256),
                 nn.ReLU(),
-                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+                nn.Linear(256, 256),
                 nn.ReLU(),
-                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+                nn.Linear(256, 256),
             )
 
     def _fps(self, points, number):
@@ -499,6 +524,7 @@ class AdaptiveLLM(nn.Module):
             features = data_dict['features']
             if self.USE_OBJECTCENTRIC:
                 vision_embed, vision_mask, center = data_dict['obj_tokens'], data_dict['obj_mask'], data_dict['obj_center']
+                neighborhood_xyz = None
             else:
                 vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, features, level)
                 
@@ -533,20 +559,23 @@ class AdaptiveLLM(nn.Module):
         prompt_feature = torch.cat(visual_prompt, dim=1)   # batch x (2 x ntoken) x channel
         prompt_mask = torch.cat(visual_mask, dim=1)        # batch x (2 x ntoken)
         if self.FLEX:
-            if self.USE_OBJECTCENTRIC:
-                hd_center = center.clone()
-                hd_vision_embed = data_dict['hd_obj_tokens'].unsqueeze(2)
-                point_cloud_dims_min, _ = data_dict['hd_points'][..., :3].min(dim=1)
-                point_cloud_dims_max, _ = data_dict['hd_points'][..., :3].max(dim=1)
-                hd_point_cloud_dims = [
-                    point_cloud_dims_min,
-                    point_cloud_dims_max,
-                ]
-            else:
-                hd_corpus = self._get_hd_corpus(data_dict, center, neighborhood_xyz)
-                hd_center = hd_corpus['dense_center']
-                hd_point_cloud_dims = hd_corpus['point_cloud_dims']
-                hd_vision_embed = hd_corpus['dense_features']
+            # if self.USE_OBJECTCENTRIC:
+            #     hd_center = center.clone()
+            #     # hd_vision_embed = data_dict['hd_obj_tokens'].unsqueeze(2)
+            #     hd_vision_embed = data_dict['hd_obj_tokens']
+            #     hd_center = hd_center.repeat(1, self._llm_config.DENSE_TOKEN_NUM, 1)
+            #     # point_cloud_dims_min, _ = data_dict['hd_points'][..., :3].min(dim=1)
+            #     # point_cloud_dims_max, _ = data_dict['hd_points'][..., :3].max(dim=1)
+            #     # hd_point_cloud_dims = [
+            #     #     point_cloud_dims_min,
+            #     #     point_cloud_dims_max,
+            #     # ]
+            #     hd_point_cloud_dims = point_cloud_dims.copy()
+            # else:
+            hd_corpus = self._get_hd_corpus(data_dict, center, neighborhood_xyz)
+            hd_center = hd_corpus['dense_center']
+            hd_point_cloud_dims = hd_corpus['point_cloud_dims']
+            hd_vision_embed = hd_corpus['dense_features']
             bsz, _, tn, dim = hd_vision_embed.shape
             TN = self._encoder_config.DENSE_TOKEN_NUM
             assert tn == TN
@@ -566,7 +595,7 @@ class AdaptiveLLM(nn.Module):
             # Set hd corpus for self attention layer
             # self.llm.config.start_learnable_id = data_dict['start_learnable_id']
             if self.USE_QFORMER:
-                hd_vision_embed = self.qformer_interface.qformer_to_llm_projection(hd_vision_embed)
+                hd_vision_embed = self.qformer_interface.hd_qformer_to_llm_projection(hd_vision_embed)
             for i in range(len(self.llm.model.layers)):
                 self.llm.model.layers[i].self_attn.hd_features = hd_vision_embed.view(bsz, -1, TN, self._llm_config.hidden_size).contiguous()
                 self.llm.model.layers[i].self_attn.step_ratio = data_dict.get('step_ratio', None)
@@ -651,7 +680,7 @@ class AdaptiveLLM(nn.Module):
                     visual_prompt_embeds=prompt_feature[batch_id].unsqueeze(0).to(self.dtype),
                     visual_prompt_mask=prompt_mask[batch_id].unsqueeze(0).to(self.dtype),
                     tokenizer = self.tokenizer,
-                    max_length=128,   
+                    max_length=20,   
                     **caption_config,
                 )
                 output_ids.append(output['output_ids'])

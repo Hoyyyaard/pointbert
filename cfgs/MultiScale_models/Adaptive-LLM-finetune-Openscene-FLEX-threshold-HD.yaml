@@ -27,12 +27,12 @@ model : {
 
   FLEX: True,
   DENSE_TOKEN_NUM: 4,
-  DENSE_TOKEN_SELECT_THRESHOLD: 64,
+  DENSE_TOKEN_SELECT_THRESHOLD: 96,
   # DENSE_TOKEN_SELECT_TOPK: 10,
   START_FLEX_LAYER: 8,
   FLEX_WARM_UP: -1,
   ONLY_ANS_FLEX: False,
-  
+
   trans_dim: 768,
 
   use_openscene: True,

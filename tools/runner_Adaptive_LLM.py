@@ -210,6 +210,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             pbar = tqdm(total = n_batches)
             for idx, data_dict in enumerate(train_dataloader):
                 pbar.update(1)          
+                
                 curr_time = time.time()
                 num_iter += 1
                 n_itr = epoch * n_batches + idx
@@ -423,10 +424,10 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
     output_len = (output_ids[0] != 2).sum().item()
     # input_len = 128 + (data_dict['instruction_mask'][0] == 1).sum().item()
     # len(inputs_ids) - <scene_placehold> - <vp_placehold> + scene_embedding + vp_embedding
-    input_len = (data_dict['instruction_mask'][0] == 1).sum().item() - 1 - 1 + 128 + 16
+    input_len = (data_dict['instruction_mask'][0] == 1).sum().item() - 1 - 1 + base_model.llm.config.VISION_TOKEN_NUM + 16
     valid_len = input_len + output_len
     scene_token_start_index = base_model.llm.config.scene_token_start_index
-    scene_token_end_index = scene_token_start_index + 128
+    scene_token_end_index = scene_token_start_index + base_model.llm.config.VISION_TOKEN_NUM
     attentions = attentions[0, : ,: ,:valid_len, :valid_len] # [32, 32, valid_len, valid_len]
     # Viualize the attention map
     plt.figure(figsize=(20, 20))
@@ -441,7 +442,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
         plt.imshow(mean_attn, alpha=0.7, cmap='rainbow',aspect='auto')
         plt.title(str(ii))
     plt.tight_layout()
-    plt.savefig("vis_attn_Exp0081E4/attention_map_{}_{}.png".format(unique_id, answer))    
+    plt.savefig("vis_attn_Exp0093E4/attention_map_{}_{}.png".format(unique_id, answer))    
     plt.close()
             
     for idx in range(output_len):
@@ -452,14 +453,17 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
         idx_map = idx_map.reshape((6, 6))
         pbar = tqdm(total = len(attentions[0]))
         for ii, layer in enumerate(range(len(attentions[0]))):
+            pbar.update(1)
             if base_model.llm.config.USE_QFORMER:
                 qformer_x_attns = base_model.llm.model.layers[0].self_attn.qformer_x_attns[0][0].sum(0)
                 x_attns_min_vals = torch.min(qformer_x_attns, dim=-1, keepdim=True).values
                 x_attns_max_vals = torch.max(qformer_x_attns, dim=-1, keepdim=True).values
                 qformer_x_attns = (qformer_x_attns - x_attns_min_vals) / (x_attns_max_vals - x_attns_min_vals)
-                
                 mean_attn = attentions[layer][:,idx+input_len].sum(0).detach().cpu().unsqueeze(0) # [1, xx]
                 mean_attn = mean_attn[:, scene_token_start_index:scene_token_end_index]
+                # attn_topk_index = mean_attn.float().topk(10, dim=-1)[1][:, :5]
+                # mean_attn = mean_attn[:, attn_topk_index[0]].contiguous()
+                # qformer_x_attns = qformer_x_attns[attn_topk_index[0], :].contiguous()
                 # # softmax
                 mean_attn = torch.nn.functional.softmax(mean_attn.float(), dim=-1).to(qformer_x_attns.device)
                 mean_attn = (mean_attn @ qformer_x_attns.float()).cpu().numpy()
@@ -521,14 +525,14 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
             axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
             
         fig.tight_layout()
-        fig.savefig("vis_attn_Exp0081E4/{}_{}_{}.png".format(idx, unique_id, answer))    
+        fig.savefig("vis_attn_Exp0093E4/{}_{}_{}.png".format(idx, unique_id, answer))    
 
 def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None, finetune=False):
     print_log(f"[VALIDATION] Start validating epoch {epoch}", logger = logger)
     base_model.eval()  # set model to eval mode
     
     if args.visualization_attn:
-        pred_corpus = json.load(open("ckpts/Exp0081E4.json"))
+        pred_corpus = json.load(open("ckpts/Exp0093E4.json"))
     # if not finetune:
     candidates = {}
     test_pbar = tqdm(total = len(test_dataloader))
@@ -545,8 +549,8 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
                 if isinstance(v, torch.Tensor):
                     data_dict[k] = v.cuda()
             
-            # with amp.autocast():
-            output_ids, attentions, center = base_model(data_dict, eval=True)
+            with amp.autocast():
+                output_ids, attentions, center = base_model(data_dict, eval=True)
             outputs = dict(
                 output_ids=output_ids,
             )

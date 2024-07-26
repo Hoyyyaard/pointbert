@@ -57,5 +57,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm \
     --sync_bn \
     --config cfgs/MultiScale_models/qformer/Qformer-Adaptive-LLM-finetune-Openscene-FLEX-QueryProb-threshold-HD.yaml \
-    --exp_name Exp0093_0720_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold96_QueryProb_QformerAttnLayer0_From[Scratch] \
+    --exp_name Exp0107_0726_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold127_QueryProb_QformerAttnLayer0_From[LL3DA] \
     --resume

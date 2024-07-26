@@ -25,7 +25,7 @@ model : {
   distributed: FSDP,  # DDP, FSDP
 
   FLEX: True,
-  DENSE_TOKEN_NUM: 4,
+  DENSE_TOKEN_NUM: 2,
   DENSE_TOKEN_SELECT_THRESHOLD: 96,
   ONLY_ANS_FLEX: False,
 

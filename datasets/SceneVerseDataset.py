@@ -1278,8 +1278,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             self.config.differ_prompt = False
         
         self.USE_OBJECTCENTRIC = config.get('USE_OBJECTCENTRIC', False)
-        if self.USE_OBJECTCENTRIC:
-            self.room_label_offset = 10000
+        self.room_label_offset = 10000
         
         self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
         self.VP_TOKEN = '<vp_placehold>'
@@ -1626,24 +1625,51 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             instance_labels = dict['instance_labels'].numpy()
         return points, colors, features, instance_labels, inst_to_label
     
-    def proc_object_tokens_for_objectcentric(self, points, features, instance_labels):
+    def proc_object_tokens_for_objectcentric(self, points, features, instance_labels, sparse_obj_token_label=None):
         object_tokens = []
         center = []
-        for label in np.unique(instance_labels):
-            if label <=0 :
-                continue
-            mask = instance_labels == label
-            object_points = points[mask]
-            object_features = features[mask]
-            center.append(object_points.mean(0))
-            object_tokens.append(object_features.mean(0))
+        obj_token_label = []
+        if sparse_obj_token_label is None:
+            for label in np.unique(instance_labels):
+                if label <= 0 or label == self.room_label_offset or label == self.room_label_offset*2 or label == self.room_label_offset*3:
+                    continue
+                mask = instance_labels == label
+                object_points = points[mask]
+                object_features = features[mask]
+                center.append(object_points.mean(0))
+                object_tokens.append(object_features.mean(0))
+                obj_token_label.append(label)
+        else:
+            # As dense vision token needs be the same order as the sparse token
+            for label in sparse_obj_token_label:
+                mask = instance_labels == label
+                num = 2
+                if mask.sum() == 0:
+                    center.append(np.zeros((3,)).astype(np.float32))
+                    object_tokens.append(np.zeros((num, 768)).astype(np.float32))
+                else:
+                    object_points = points[mask]
+                    object_features = features[mask]
+                    dim = 0
+                    usable_size = (object_features.shape[dim] // num) * num
+                    object_features = object_features[:usable_size, :]
+                    splits = np.split(object_features, num, axis=dim)
+                    means = [np.mean(split, axis=dim, keepdims=True) for split in splits]
+                    object_features = np.concatenate(means, axis=dim)
+                    center.append(object_points.mean(0))
+                    object_tokens.append(object_features)
+                obj_token_label.append(label)
+
         center = np.array(center)
         object_tokens = np.array(object_tokens)
         if len(object_tokens) <= self._num_groups:
             # pad to group size
             pad_size = self._num_groups - len(object_tokens)
             object_mask = np.concatenate([np.ones(len(object_tokens)), np.zeros(pad_size)], 0)
-            object_tokens = np.concatenate([object_tokens, np.zeros((pad_size, object_tokens.shape[-1]))], 0)
+            if sparse_obj_token_label is None:
+                object_tokens = np.concatenate([object_tokens, np.zeros((pad_size, object_tokens.shape[-1]))], 0)
+            else:
+                object_tokens = np.concatenate([object_tokens, np.zeros((pad_size, num, object_tokens.shape[-1]))], 0)
             center = np.concatenate([center, np.zeros((pad_size, center.shape[-1]))], 0)
         else:
             object_mask = np.ones(len(object_tokens))
@@ -1651,7 +1677,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             center = center[:self._num_groups]
             object_mask = object_mask[:self._num_groups]
 
-        return object_tokens, center, object_mask
+        return object_tokens, center, object_mask, obj_token_label
 
     def __len__(self):
         return len(self.order_episodes)
@@ -1676,7 +1702,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             features = []
             instance_labels = []
             inst_to_label = {}
-            for room_id in region_id.split('-'):
+            for ri, room_id in enumerate(region_id.split('-')):
                 pts, cols, fts, ils, itl = self._load_scan_data(f'{scan_name}_{room_id}.pth', dataset_name)
                 points.extend(pts + room_center[room_id]['center'])
                 colors.extend(cols)
@@ -1685,7 +1711,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
                     instance_labels.extend(ils)
                 else:
                     if self.USE_OBJECTCENTRIC:
-                        instance_labels.extend(ils+self.room_label_offset)
+                        instance_labels.extend(ils+int(self.room_label_offset*ri))
                     else:
                         instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
                 inst_to_label[room_id] = itl
@@ -1709,17 +1735,19 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             hd_points, hd_features, hd_instance_labels, _ = down_sample(points, features, instance_labels, npoint=N)
             hd_points = hd_points.astype(np.float32)
             hd_features = hd_features.astype(np.float32)
-            hd_obj_tokens, hd_obj_center, hd_obj_mask = self.proc_object_tokens_for_objectcentric(hd_points, hd_features, hd_instance_labels)
         else:
             hd_points = None
             hd_features = None
-            hd_obj_tokens = None
-            hd_obj_center = None
-            hd_obj_mask = None
 
         points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
-        obj_tokens, obj_center, obj_mask = self.proc_object_tokens_for_objectcentric(points, features, instance_labels)
-
+        obj_tokens, obj_center, obj_mask, sparse_obj_token_label = self.proc_object_tokens_for_objectcentric(points, features, instance_labels)
+        # if not self.wohd:
+        #     hd_obj_tokens, hd_obj_center, hd_obj_mask, _ = self.proc_object_tokens_for_objectcentric(hd_points, hd_features, hd_instance_labels, sparse_obj_token_label)
+        # else:
+        #     hd_obj_tokens = None
+        #     hd_obj_center = None
+        #     hd_obj_mask = None
+        
         ret_dict = {
             'num_groups': self._num_groups,
             'group_size': self._group_size,
@@ -1742,12 +1770,13 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             ret_dict['obj_mask'] = obj_mask.astype(np.float32)
         
         if not self.wohd:
+            # if self.USE_OBJECTCENTRIC:
+            #     ret_dict['hd_obj_tokens'] = hd_obj_tokens.astype(np.float32)
+            #     # ret_dict['hd_obj_center'] = hd_obj_center.astype(np.float32)
+            #     # ret_dict['hd_obj_mask'] = hd_obj_mask.astype(np.float32)
+            # else:
             ret_dict['hd_points'] = hd_points
             ret_dict['hd_features'] = hd_features
-            if self.USE_OBJECTCENTRIC:
-                ret_dict['hd_obj_tokens'] = hd_obj_tokens.astype(np.float32)
-                ret_dict['hd_obj_center'] = hd_obj_center.astype(np.float32)
-                ret_dict['hd_obj_mask'] = hd_obj_mask.astype(np.float32)
         
         if self.OPENSCENE:
             ret_dict['features'] = features
@@ -2052,6 +2081,9 @@ class HD_Hm3dQADataset(Dataset):
         self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
         self.VP_TOKEN = '<vp_placehold>'
         
+        self.USE_OBJECTCENTRIC = config.get('USE_OBJECTCENTRIC', False)
+        self.room_label_offset = 10000
+        
         special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
         # xyz_prompt = '<loc{}>'
         # for i in range(255):
@@ -2100,7 +2132,52 @@ class HD_Hm3dQADataset(Dataset):
         self.corpus = {
             'hd_scene_qa': copy.deepcopy(self.all_scene_qa),
         }
-        
+
+    def proc_object_tokens_for_objectcentric(self, points, features, instance_labels, sparse_obj_token_label=None):
+        object_tokens = []
+        center = []
+        object_tokens = []
+        center = []
+        obj_token_label = []
+        if sparse_obj_token_label is None:
+            for label in np.unique(instance_labels):
+                if label <= 0 or label == self.room_label_offset or label == self.room_label_offset*2 or label == self.room_label_offset*3:
+                    continue
+                mask = instance_labels == label
+                object_points = points[mask]
+                object_features = features[mask]
+                center.append(object_points.mean(0))
+                object_tokens.append(object_features.mean(0))
+                obj_token_label.append(label)
+        else:
+            # As dense vision token needs be the same order as the sparse token
+            for label in sparse_obj_token_label:
+                mask = instance_labels == label
+                if mask.sum() == 0:
+                    center.append(np.zeros((3,)).astype(np.float32))
+                    object_tokens.append(np.zeros((768,)).astype(np.float32))
+                else:
+                    object_points = points[mask]
+                    object_features = features[mask]
+                    center.append(object_points.mean(0))
+                    object_tokens.append(object_features.mean(0))
+                obj_token_label.append(label)
+        center = np.array(center)
+        object_tokens = np.array(object_tokens)
+        if len(object_tokens) <= self._num_groups:
+            # pad to group size
+            pad_size = self._num_groups - len(object_tokens)
+            object_mask = np.concatenate([np.ones(len(object_tokens)), np.zeros(pad_size)], 0)
+            object_tokens = np.concatenate([object_tokens, np.zeros((pad_size, object_tokens.shape[-1]))], 0)
+            center = np.concatenate([center, np.zeros((pad_size, center.shape[-1]))], 0)
+        else:
+            object_mask = np.ones(len(object_tokens))
+            object_tokens = object_tokens[:self._num_groups]
+            center = center[:self._num_groups]
+            object_mask = object_mask[:self._num_groups]
+
+        return object_tokens, center, object_mask, obj_token_label
+
     def _load_scan(self, pcd_path, inst2label_path, scan_name):
         pcd_data = torch.load(os.path.join(pcd_path, f'{scan_name}'))
         try:
@@ -2159,7 +2236,7 @@ class HD_Hm3dQADataset(Dataset):
         features = []
         instance_labels = []
         inst_to_label = {}
-        for room_id in region_id.split('-'):
+        for ri, room_id in enumerate(region_id.split('-')):
             pts, cols, fts, ils, itl = self._load_scan_data(f'{scan_name}_{room_id}.pth', dataset_name)
             points.extend(pts + room_center[room_id]['center'])
             colors.extend(cols)
@@ -2167,7 +2244,10 @@ class HD_Hm3dQADataset(Dataset):
             if room_id == instance_room_id:
                 instance_labels.extend(ils)
             else:
-                instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
+                if self.USE_OBJECTCENTRIC:
+                    instance_labels.extend(ils+int(self.room_label_offset*ri))
+                else:
+                    instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
             inst_to_label[room_id] = itl
         
         points = np.array(points)
@@ -2187,6 +2267,8 @@ class HD_Hm3dQADataset(Dataset):
         # visulization_pointclouds_bbox_use_plt(points, colors, points[instance_labels==tgt_id])
     
         points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
+        obj_tokens, obj_center, obj_mask, sparse_obj_token_label = self.proc_object_tokens_for_objectcentric(points, features, instance_labels)
+        # hd_obj_tokens, hd_obj_center, hd_obj_mask, _ = self.proc_object_tokens_for_objectcentric(hd_points, hd_features, hd_instance_labels, sparse_obj_token_label)
 
         click_query = np.zeros((1, 3))
         click_mask = np.zeros((1,))
@@ -2211,6 +2293,14 @@ class HD_Hm3dQADataset(Dataset):
             'box_query': box_query.astype(np.float32),
             
         }
+        
+        if self.USE_OBJECTCENTRIC:
+            ret_dict['obj_tokens'] = obj_tokens.astype(np.float32)
+            ret_dict['obj_center'] = obj_center.astype(np.float32)
+            ret_dict['obj_mask'] = obj_mask.astype(np.float32)
+            # ret_dict['hd_obj_tokens'] = hd_obj_tokens.astype(np.float32)
+            # ret_dict['hd_obj_center'] = hd_obj_center.astype(np.float32)
+            # ret_dict['hd_obj_mask'] = hd_obj_mask.astype(np.float32)
         
         if hasattr(self.config, 'vis'):
             ret_dict['hd_colors'] = hd_colors.astype(np.float32)

@@ -551,8 +551,17 @@ class LlamaAttention(nn.Module):
                     max_vals = scene_token_attention_weight_per_batch.max(dim=1, keepdim=True).values
                     normalized_attention_weight = (scene_token_attention_weight_per_batch - min_vals) / (max_vals - min_vals)
                     # [learnable_seq_len, self.config.VISION_TOKEN_NUM]
-                    normalized_attention_weight = ((normalized_attention_weight * 255) > threshold).bool()
+                    if self.config.SELECT_STRATEGY == 'RANDOM':
+                        random_mask = torch.zeros(normalized_attention_weight.size(), device=normalized_attention_weight.device, dtype=torch.bool)
+                        for ri in range(random_mask.size(0)):
+                            num_true = int(random_mask.size(1) * 0.1)  # 计算10%的元素数量
+                            true_indices = torch.randperm(random_mask.size(1))[:num_true]  # 随机选择索引
+                            random_mask[ri, true_indices] = True  # 设置为True
+                        normalized_attention_weight = random_mask.bool()
+                    else:
+                        normalized_attention_weight = ((normalized_attention_weight * 255) > threshold).bool()
                     # print(normalized_attention_weight.sum(dim=1)[-1])
+                    # print(torch.where(normalized_attention_weight[-1] == True))
                     expand_normalized_attention_weight = normalized_attention_weight.repeat_interleave(self.config.DENSE_TOKEN_NUM, dim=-1)
                     # if not self.training:
                     #     select_mask[-1, :] = expand_normalized_attention_weight[-1]

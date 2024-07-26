@@ -56,5 +56,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm \
     --sync_bn \
     --config cfgs/MultiScale_models/Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD.yaml \
-    --exp_name Exp0076_0710_WHdAugBbox_DiffPrompt_FlexWarmUp-1_FlexThreshold127_From[Scratch] \
+    --exp_name Exp0103_0724_RandomSelect_WHdAugBbox_WoDiffPrompt_FlexWarmUp-1_FlexThreshold96_From[Scratch] \
     --resume
