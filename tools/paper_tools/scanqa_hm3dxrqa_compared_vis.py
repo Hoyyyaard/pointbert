@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 scanqa_areas = json.load(open('data/SceneVerse/meta_data/scanqa.json'))
 hm3dxrqa_areas = json.load(open('data/SceneVerse/meta_data/hm3dxrqa.json'))
-hm3dxrqa_areas = {k:v for k,v in hm3dxrqa_areas.items() if not int(v) > 500}
+hm3dxrqa_areas = {k:v for k,v in hm3dxrqa_areas.items() if not int(v) > 200}
 
 scanqa_areas = list(scanqa_areas.values())
 hm3dxrqa_areas = list(hm3dxrqa_areas.values())
@@ -34,11 +34,12 @@ sns.kdeplot(hm3dxrqa_areas, label='HM3D-XR-QA', fill=True)
 
 
 # Add labels and title
-plt.xlabel('Area Size')
-plt.ylabel('Number of Scenes')
-plt.title('Smooth Comparison of Scene Areas Between ScanQA and HM3D-QRQA')
-plt.legend()
-
+plt.xlabel('Area Size (m²)', fontsize=20)
+plt.ylabel('Number of Scenes', fontsize=20)
+plt.title('Comparison of Scene Areas Between ScanQA and HM3D-XRQA', fontsize=20)
+plt.legend(fontsize=20)  # 设置图例字体大小
+plt.xticks(fontsize=20)
+plt.yticks([])  # 移除 y 轴坐标
 # Show the plot
 plt.tight_layout()
 plt.show()

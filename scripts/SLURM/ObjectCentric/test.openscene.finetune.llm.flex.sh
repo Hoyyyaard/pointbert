@@ -55,6 +55,6 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     $CMD  main_ALLM.py \
     --launcher slurm \
     --config cfgs/MultiScale_models/objectcentric/ObjectCentric-Adaptive-LLM-finetune-Openscene-test-FLEX-threshold-hm3dqa.yaml \
-    --exp_name Exp0104_0724_DenseToken4_FixOrderBug_WHdAugBbox_DiffPrompt_FlexWarmUp20_Threshold127_From[Scratch]_Epoch4 \
-    --ckpt experiments/ObjectCentric-Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD/objectcentric/Exp0104_0724_DenseToken4_FixOrderBug_WHdAugBbox_DiffPrompt_FlexWarmUp20_Threshold127_From[Scratch]/ckpt-epoch-003.pth\
+    --exp_name Exp0109_0726_LeoModel_DenseToken4_FixOrderBug_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold127_From[Scratch]_Epoch3 \
+    --ckpt experiments/ObjectCentric-Adaptive-LLM-finetune-Openscene-FLEX-threshold-HD/objectcentric/Exp0109_0726_LeoModel_DenseToken4_FixOrderBug_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold127_From[Scratch]/ckpt-epoch-002.pth\
     --test 

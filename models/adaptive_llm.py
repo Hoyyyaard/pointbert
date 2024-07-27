@@ -1,5 +1,6 @@
 from torch import nn
 import torch
+import copy
 from models.modeling_llama import LlamaForCausalLM
 from models.modeling_llama_old_version import LlamaForCausalLM as LlamaForCausalLM_Ori
 from models.Point_BERT import PointTransformer
@@ -15,6 +16,7 @@ from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
     wrap,
 )
+import einops
 from models.dvae import knn_point, square_distance, Group
 from utils import misc
 import functools
@@ -34,6 +36,171 @@ from transformers import (
 
 NORM = True 
 
+
+class LeoObjectEncoder(nn.Module):
+    def __init__(self, encoder_config, llm_config):
+        super(LeoObjectEncoder, self).__init__()
+        from models.leo_backbone import PointBERT, TransformerSpatialEncoderLayer
+        
+        self.room_label_offset = 10000
+        
+        self.obj_encoder = PointBERT(
+            trans_dim=384,
+            depth=12,
+            drop_path_rate=0.1,
+            num_heads=6,
+            cls_dim=40,
+            group_size=128,
+            num_group=8,
+            encoder_dims=256
+        )
+        ckpts = torch.load("ckpts/pretrained_models_ckpt_zero-sho_classification_pointbert_ULIP-2.pt", map_location='cpu')
+        ckpts = {k.replace("module.point_encoder.", ""):v for k,v in ckpts['state_dict'].items() if k.find('point_encoder.') != -1}
+        msg = self.obj_encoder.load_state_dict(ckpts, strict=False)
+        print(msg)
+        
+        for param in self.obj_encoder.parameters():
+            param.requires_grad = False
+        
+        self.hidden_dim = 256
+        self.obj_proj = nn.Linear(self.obj_encoder.out_dim, self.hidden_dim)
+        self.hd_obj_proj = nn.Linear(encoder_config.trans_dim, self.hidden_dim)
+
+        spatial_encoder_layer = TransformerSpatialEncoderLayer(
+                d_model=self.hidden_dim,
+                nhead=8,
+                dim_feedforward=2048,
+                dropout=0.1,
+                activation='gelu',
+                spatial_dim=5,
+                spatial_multihead=True,
+                spatial_attn_fusion='cond',
+            )
+        self.spatial_encoder = self.layer_repeat(
+            spatial_encoder_layer,
+            3,
+        )
+        self.pairwise_rel_type = 'center'
+        self.spatial_dist_norm = True
+        self.spatial_dim = 5
+        self.obj_loc_encoding = 'same_all'
+        
+        num_loc_layers = 1
+        loc_layer = nn.Sequential(
+            nn.Linear(6, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
+        )
+        self.loc_layers = self.layer_repeat(loc_layer, num_loc_layers)
+        
+        # only initialize spatial encoder and loc layers
+        self.spatial_encoder.apply(self._init_weights_bert)
+        self.loc_layers.apply(self._init_weights_bert)
+    
+    def forward(self, data_dict):
+        pts = data_dict['obj_tokens'][:, :, :, :3].contiguous()
+        bsz = pts.shape[0]
+        points_per_object = pts.shape[-2]
+        pts = pts.view(-1, points_per_object, 3)
+        obj_feats = self.obj_encoder(pts)
+        obj_feats = self.obj_proj(obj_feats)
+        obj_feats = obj_feats.view(bsz, -1, obj_feats.shape[-1])
+        obj_locs = data_dict['obj_loc']
+        obj_masks = ~data_dict['obj_mask'].bool()
+        
+        pairwise_locs = self.calc_pairwise_locs(
+                obj_locs[:, :, :3],
+                obj_locs[:, :, 3:],
+                pairwise_rel_type='center',
+                spatial_dist_norm=True,
+                spatial_dim=5,
+            )
+
+        for i, pc_layer in enumerate(self.spatial_encoder):
+            query_pos = self.loc_layers[0](obj_locs)
+            if not ('same_all' == 'same_0' and i > 0):
+                obj_feats = obj_feats + query_pos
+                
+            obj_feats, _ = pc_layer(
+                    obj_feats, pairwise_locs,
+                    tgt_key_padding_mask=obj_masks
+                )
+        
+        return obj_feats, ~obj_masks
+    
+    def calc_pairwise_locs(self, obj_centers, obj_whls, eps=1e-10, pairwise_rel_type='center', spatial_dist_norm=True,
+                       spatial_dim=5):
+        if pairwise_rel_type == 'mlp':
+            obj_locs = torch.cat([obj_centers, obj_whls], 2)
+            pairwise_locs = torch.cat(
+                [einops.repeat(obj_locs, 'b l d -> b l x d', x=obj_locs.size(1)),
+                einops.repeat(obj_locs, 'b l d -> b x l d', x=obj_locs.size(1))],
+                dim=3
+            )
+            return pairwise_locs
+
+        pairwise_locs = einops.repeat(obj_centers, 'b l d -> b l 1 d') \
+                        - einops.repeat(obj_centers, 'b l d -> b 1 l d')
+        pairwise_dists = torch.sqrt(torch.sum(pairwise_locs ** 2, 3) + eps)  # (b, l, l)
+        if spatial_dist_norm:
+            max_dists = torch.max(pairwise_dists.view(pairwise_dists.size(0), -1), dim=1)[0]
+            norm_pairwise_dists = pairwise_dists / einops.repeat(max_dists, 'b -> b 1 1')
+        else:
+            norm_pairwise_dists = pairwise_dists
+
+        if spatial_dim == 1:
+            return norm_pairwise_dists.unsqueeze(3)
+
+        pairwise_dists_2d = torch.sqrt(torch.sum(pairwise_locs[..., :2] ** 2, 3) + eps)
+        if pairwise_rel_type == 'center':
+            pairwise_locs = torch.stack(
+                [norm_pairwise_dists, pairwise_locs[..., 2] / pairwise_dists,
+                pairwise_dists_2d / pairwise_dists, pairwise_locs[..., 1] / pairwise_dists_2d,
+                pairwise_locs[..., 0] / pairwise_dists_2d],
+                dim=3
+            )
+        elif pairwise_rel_type == 'vertical_bottom':
+            bottom_centers = torch.clone(obj_centers)
+            bottom_centers[:, :, 2] -= obj_whls[:, :, 2]
+            bottom_pairwise_locs = einops.repeat(bottom_centers, 'b l d -> b l 1 d') \
+                                - einops.repeat(bottom_centers, 'b l d -> b 1 l d')
+            bottom_pairwise_dists = torch.sqrt(torch.sum(bottom_pairwise_locs ** 2, 3) + eps)  # (b, l, l)
+            bottom_pairwise_dists_2d = torch.sqrt(torch.sum(bottom_pairwise_locs[..., :2] ** 2, 3) + eps)
+            pairwise_locs = torch.stack(
+                [norm_pairwise_dists,
+                bottom_pairwise_locs[..., 2] / bottom_pairwise_dists,
+                bottom_pairwise_dists_2d / bottom_pairwise_dists,
+                pairwise_locs[..., 1] / pairwise_dists_2d,
+                pairwise_locs[..., 0] / pairwise_dists_2d],
+                dim=3
+            )
+
+        if spatial_dim == 4:
+            pairwise_locs = pairwise_locs[..., 1:]
+        return pairwise_locs
+    
+    def layer_repeat(self, module, N):
+        return nn.ModuleList([copy.deepcopy(module) for _ in range(N - 1)] + [module])
+
+    def _init_weights_bert(self, module, std=0.02):
+        """
+            Huggingface transformer weight initialization,
+            most commonly for bert initialization
+        """
+        if isinstance(module, nn.Linear):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+    
+    
 class Qformer_Interface(nn.Module):
     def __init__(self, encoder_hidden_state, llm_config):
         super(Qformer_Interface, self).__init__()
@@ -266,10 +433,10 @@ class AdaptiveLLM(nn.Module):
                 self.llm.model.gradient_checkpointing_enable()
                 print_log("Gradient checkpointing is enabled", logger=self.logger)
         
-        if not self.OPENSCENE:
-            self.encoder = PointTransformer(self._encoder_config)
-        else:
+        if not self.USE_OBJECTCENTRIC:
             self.encoder = OpensceneEncoder(self._encoder_config)
+        else:
+            self.encoder = LeoObjectEncoder(self._encoder_config, self._llm_config)
         
         # Expand LLM vocalubary when finetune as there are grouding data
         special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
@@ -300,22 +467,7 @@ class AdaptiveLLM(nn.Module):
             normalize=True
         )
         
-        if not self.USE_QFORMER:
-        # Given xyz and token mask version
-            self.xyz_projection = nn.Sequential(
-                nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
-                nn.ReLU(),
-                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
-            )
-            
-            self.encoder_to_llm_projection = nn.Sequential(
-                nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
-                nn.ReLU(),
-                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
-                nn.ReLU(),
-                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
-            )
-        else:
+        if self.USE_QFORMER:
             self.xyz_projection = nn.Sequential(
                 nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
                 nn.ReLU(),
@@ -335,6 +487,36 @@ class AdaptiveLLM(nn.Module):
                 nn.Linear(256, 256),
                 nn.ReLU(),
                 nn.Linear(256, 256),
+            )
+            
+        elif self.USE_OBJECTCENTRIC:
+            self.xyz_projection = nn.Sequential(
+                    nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+                    nn.ReLU(),
+                    nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+                )
+                
+            self.encoder_to_llm_projection = nn.Sequential(
+                nn.Linear(self.encoder.hidden_dim , self._llm_config.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+            )
+
+        else:
+            self.xyz_projection = nn.Sequential(
+                nn.Linear(self._encoder_config.trans_dim , self._encoder_config.trans_dim),
+                nn.ReLU(),
+                nn.Linear(self._encoder_config.trans_dim, self._encoder_config.trans_dim),
+            )
+            
+            self.encoder_to_llm_projection = nn.Sequential(
+                nn.Linear(self._encoder_config.trans_dim , self._llm_config.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self._llm_config.hidden_size, self._llm_config.hidden_size),
             )
 
     def _fps(self, points, number):
@@ -523,7 +705,8 @@ class AdaptiveLLM(nn.Module):
             level = data_dict['level']
             features = data_dict['features']
             if self.USE_OBJECTCENTRIC:
-                vision_embed, vision_mask, center = data_dict['obj_tokens'], data_dict['obj_mask'], data_dict['obj_center']
+                vision_embed, vision_mask = self.encoder(data_dict)
+                center = data_dict['obj_center']
                 neighborhood_xyz = None
             else:
                 vision_embed, vision_mask, center, neighborhood_xyz = self.encoder(points, features, level)
@@ -576,22 +759,26 @@ class AdaptiveLLM(nn.Module):
             hd_center = hd_corpus['dense_center']
             hd_point_cloud_dims = hd_corpus['point_cloud_dims']
             hd_vision_embed = hd_corpus['dense_features']
+            if self.USE_OBJECTCENTRIC:
+                hd_vision_embed = self.encoder.hd_obj_proj(hd_vision_embed)
             bsz, _, tn, dim = hd_vision_embed.shape
             TN = self._encoder_config.DENSE_TOKEN_NUM
             assert tn == TN
             hd_vision_embed = hd_vision_embed.view(bsz, -1, dim).contiguous()
             
-            hd_pos_embed = self.pos_emb3d(hd_center, input_range=hd_point_cloud_dims)
-            pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
-            all_pos_embed = torch.cat((pos_embed, hd_pos_embed), dim=-1)
-            all_pos_embed = self.xyz_projection(all_pos_embed.permute(0, 2, 1))
-            pos, hd_pos = all_pos_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
-            all_vision_embed = torch.cat((vision_embed+pos, hd_vision_embed+hd_pos), dim=1)
-            
-            all_vision_embed = torch.cat((vision_embed, hd_vision_embed), dim=1)
+            if not self.USE_OBJECTCENTRIC:
+                hd_pos_embed = self.pos_emb3d(hd_center, input_range=hd_point_cloud_dims)
+                pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
+                all_pos_embed = torch.cat((pos_embed, hd_pos_embed), dim=-1)
+                all_pos_embed = self.xyz_projection(all_pos_embed.permute(0, 2, 1))
+                pos, hd_pos = all_pos_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
+                all_vision_embed = torch.cat((vision_embed+pos, hd_vision_embed+hd_pos), dim=1)
+            else:
+                all_vision_embed = torch.cat((vision_embed, hd_vision_embed), dim=1)
+                
             all_vision_embed = self.encoder_to_llm_projection(all_vision_embed)
             vision_embed, hd_vision_embed = all_vision_embed.split([vision_embed.shape[1], hd_vision_embed.shape[1]], dim=1)
-            hd_vision_embed = hd_vision_embed.to(self.dtype)
+            # hd_vision_embed = hd_vision_embed.to(self.dtype)
             # Set hd corpus for self attention layer
             # self.llm.config.start_learnable_id = data_dict['start_learnable_id']
             if self.USE_QFORMER:
@@ -600,9 +787,12 @@ class AdaptiveLLM(nn.Module):
                 self.llm.model.layers[i].self_attn.hd_features = hd_vision_embed.view(bsz, -1, TN, self._llm_config.hidden_size).contiguous()
                 self.llm.model.layers[i].self_attn.step_ratio = data_dict.get('step_ratio', None)
         else:
-            pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
-            pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
-            vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
+            if self.USE_OBJECTCENTRIC:
+                vision_embed = self.encoder_to_llm_projection(vision_embed) 
+            else:
+                pos_embed = self.pos_emb3d(center, input_range=point_cloud_dims)
+                pos_embed = self.xyz_projection(pos_embed.permute(0, 2, 1))
+                vision_embed = self.encoder_to_llm_projection(vision_embed + pos_embed) 
         
         if self.USE_QFORMER:
             assert torch.all(vision_mask == 1)

@@ -93,11 +93,11 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         for n, p in base_model.encoder.named_parameters():
             p.requires_grad = False
 
-    else:
-        for n, p in base_model.llm.named_parameters():
-            p.requires_grad = True
-        for n, p in base_model.encoder.named_parameters():
-            p.requires_grad = False
+    # else:
+    #     for n, p in base_model.llm.named_parameters():
+    #         p.requires_grad = True
+    #     for n, p in base_model.encoder.named_parameters():
+    #         p.requires_grad = False
         
     
     # if args.use_gpu:
@@ -114,19 +114,19 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
     #     print_log('Using FSDP to fully finetune LLM')
     #     base_model.wrap_lora()
     
-    if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
-        if os.path.exists(os.path.join(args.experiment_path, 'wandb_id.json')):
-            with open(os.path.join(args.experiment_path, 'wandb_id.json'), "r") as f:
-                id = json.load(f)['id']
-                wandb.init(project='3DLLM', id=id, resume="must")
-            print('Resume wandb experiment')
-        else:
-            run = wandb.init(project='3DLLM', name=args.exp_name.split('_')[0])
-            id = run.id
-            # Save id to resume
-            with open(os.path.join(args.experiment_path, 'wandb_id.json'), "w") as f:
-                json.dump({'id':id}, f) 
-            print('Start new wandb experiment')
+    # if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
+    #     if os.path.exists(os.path.join(args.experiment_path, 'wandb_id.json')):
+    #         with open(os.path.join(args.experiment_path, 'wandb_id.json'), "r") as f:
+    #             id = json.load(f)['id']
+    #             wandb.init(project='3DLLM', id=id, resume="must")
+    #         print('Resume wandb experiment')
+    #     else:
+    #         run = wandb.init(project='3DLLM', name=args.exp_name.split('_')[0])
+    #         id = run.id
+    #         # Save id to resume
+    #         with open(os.path.join(args.experiment_path, 'wandb_id.json'), "w") as f:
+    #             json.dump({'id':id}, f) 
+    #         print('Start new wandb experiment')
 
     # resume ckpts
     if args.resume:
@@ -271,8 +271,8 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
                     train_writer.add_scalar('Loss/Batch/Loss', loss.item(), n_itr)
                     train_writer.add_scalar('Loss/Batch/LR', optimizer.param_groups[0]['lr'], n_itr)
                     
-                if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
-                    wandb.log({"step": n_itr, "loss": loss.item(), "lr": optimizer.param_groups[0]['lr']})
+                # if not test and args.local_rank == 0 and int(os.environ["RANK"]) == 0:
+                #     wandb.log({"step": n_itr, "loss": loss.item(), "lr": optimizer.param_groups[0]['lr']})
 
                 batch_time.update(time.time() - batch_start_time)
                 batch_start_time = time.time()
@@ -442,7 +442,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
         plt.imshow(mean_attn, alpha=0.7, cmap='rainbow',aspect='auto')
         plt.title(str(ii))
     plt.tight_layout()
-    plt.savefig("vis_attn_Exp0093E4/attention_map_{}_{}.png".format(unique_id, answer))    
+    plt.savefig("vis_attn_Exp0107E4/attention_map_{}_{}.png".format(unique_id, answer))    
     plt.close()
             
     for idx in range(output_len):
@@ -467,6 +467,8 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
                 # # softmax
                 mean_attn = torch.nn.functional.softmax(mean_attn.float(), dim=-1).to(qformer_x_attns.device)
                 mean_attn = (mean_attn @ qformer_x_attns.float()).cpu().numpy()
+                # For smooth visualization
+                mean_attn = np.power(mean_attn, 2)
                 min_vals = mean_attn.min(axis=1, keepdims=True)
                 max_vals = mean_attn.max(axis=1, keepdims=True)
                 mean_attn = (mean_attn - min_vals) / (max_vals - min_vals)
@@ -525,14 +527,14 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
             axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
             
         fig.tight_layout()
-        fig.savefig("vis_attn_Exp0093E4/{}_{}_{}.png".format(idx, unique_id, answer))    
+        fig.savefig("vis_attn_Exp0107E4/{}_{}_{}.png".format(idx, unique_id, answer))    
 
 def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None, finetune=False):
     print_log(f"[VALIDATION] Start validating epoch {epoch}", logger = logger)
     base_model.eval()  # set model to eval mode
     
     if args.visualization_attn:
-        pred_corpus = json.load(open("ckpts/Exp0093E4.json"))
+        pred_corpus = json.load(open("experiments/Qformer-Adaptive-LLM-finetune-Openscene-test-FLEX-QueryProb-threshold-HD-hm3dqa/qformer/test_Exp0107_0726_WHdAugBbox_DiffPrompt_FlexWarmUp-1_Threshold127_QueryProb_QformerAttnLayer0_From[LL3DA]_Epoch4/hd_scene_qa_-1_qa_pred_gt_val.json"))
     # if not finetune:
     candidates = {}
     test_pbar = tqdm(total = len(test_dataloader))
@@ -645,7 +647,7 @@ def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name
                 'gt': corpus[scene_object_id_key],
                 'score': {
                     'bleu-1': score_per_caption['bleu-1'][scene_object_id],
-                    'bleu-2': score_per_caption['bleu-2'][scene_object_id],
+                    'bleu-2': score_per_caption['bleu-2'][scene_aobject_id],
                     'bleu-3': score_per_caption['bleu-3'][scene_object_id],
                     'bleu-4': score_per_caption['bleu-4'][scene_object_id],
                     'CiDEr': score_per_caption['cider'][scene_object_id],
