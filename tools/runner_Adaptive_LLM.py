@@ -189,7 +189,7 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
         base_model.zero_grad()
         total_iter = config.max_epoch * len(train_dataloader)
         for epoch in range(start_epoch, config.max_epoch): 
-        
+            
             epoch_tqdm.update(1)
             if args.distributed:
                 train_sampler.set_epoch(epoch)
@@ -210,7 +210,6 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
             pbar = tqdm(total = n_batches)
             for idx, data_dict in enumerate(train_dataloader):
                 pbar.update(1)          
-                
                 curr_time = time.time()
                 num_iter += 1
                 n_itr = epoch * n_batches + idx
@@ -294,11 +293,15 @@ def run_net(args, config, train_writer=None, val_writer=None, test=False):
 
             print_log('[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s' %
                 (epoch,  epoch_end_time - epoch_start_time, ['%.4f' % l for l in losses.avg()]), logger = logger)
-            if epoch <= 3:
-                builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
+            
+            # if epoch <= 3:
+            builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger, finetune=finetune)  
             if epoch > 1 :
                 builder.save_checkpoint_pretrain_llm(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger, finetune=finetune)     
 
+            torch.distributed.barrier()
+            validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = logger, finetune=finetune)
+        
             torch.distributed.barrier()
             exit()
             
@@ -442,7 +445,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
         plt.imshow(mean_attn, alpha=0.7, cmap='rainbow',aspect='auto')
         plt.title(str(ii))
     plt.tight_layout()
-    plt.savefig("vis_attn_Exp0107E4/attention_map_{}_{}.png".format(unique_id, answer))    
+    plt.savefig("vis_attn_Exp0110E4/attention_map_{}_{}.png".format(unique_id, answer))    
     plt.close()
             
     for idx in range(output_len):
@@ -468,7 +471,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
                 mean_attn = torch.nn.functional.softmax(mean_attn.float(), dim=-1).to(qformer_x_attns.device)
                 mean_attn = (mean_attn @ qformer_x_attns.float()).cpu().numpy()
                 # For smooth visualization
-                mean_attn = np.power(mean_attn, 2)
+                mean_attn = np.power(mean_attn, 3)
                 min_vals = mean_attn.min(axis=1, keepdims=True)
                 max_vals = mean_attn.max(axis=1, keepdims=True)
                 mean_attn = (mean_attn - min_vals) / (max_vals - min_vals)
@@ -527,7 +530,7 @@ def visualization_attn(base_model, data_dict, attentions, output_ids, center, an
             axs[x[0], y[0]].imshow(pcd_img, aspect='auto')
             
         fig.tight_layout()
-        fig.savefig("vis_attn_Exp0107E4/{}_{}_{}.png".format(idx, unique_id, answer))    
+        fig.savefig("vis_attn_Exp0110E4/{}_{}_{}.png".format(idx, unique_id, answer))    
 
 def validate(base_model, test_dataloader, epoch, val_writer, args, config, logger = None, finetune=False):
     print_log(f"[VALIDATION] Start validating epoch {epoch}", logger = logger)
@@ -620,7 +623,8 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
             if is_primary():
                 print_log(f"\n----------------------Evaluation {k}-----------------------\n", logger = logger)
                 print_log(message, logger = logger)
-                _log_to_disk(args, message, corpus, v, score_per_caption, k, epoch)
+                Acc = _log_to_disk(args, message, corpus, v, score_per_caption, k, epoch)
+                print_log("Acc: {}".format(sum(Acc)/len(Acc)), logger = logger)
             
         if args.distributed:
             torch.cuda.synchronize()
@@ -630,8 +634,6 @@ def validate(base_model, test_dataloader, epoch, val_writer, args, config, logge
 
 
 def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name, epoch):
-    with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_scores.json"), "w") as f: 
-                json.dump(message, f)
             
     with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_corpus_val.json"), "w") as f: 
         json.dump(corpus, f, indent=4)
@@ -647,7 +649,7 @@ def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name
                 'gt': corpus[scene_object_id_key],
                 'score': {
                     'bleu-1': score_per_caption['bleu-1'][scene_object_id],
-                    'bleu-2': score_per_caption['bleu-2'][scene_aobject_id],
+                    'bleu-2': score_per_caption['bleu-2'][scene_object_id],
                     'bleu-3': score_per_caption['bleu-3'][scene_object_id],
                     'bleu-4': score_per_caption['bleu-4'][scene_object_id],
                     'CiDEr': score_per_caption['cider'][scene_object_id],
@@ -656,6 +658,22 @@ def _log_to_disk(args, message, corpus, candidates, score_per_caption, task_name
                 }
             }
         json.dump(pred_gt_val, f, indent=4)
+        
+    # Calculate Acc
+    Acc = []
+    for scene_object_id, scene_object_id_key in enumerate(candidates):
+        if candidates[scene_object_id_key] == corpus[scene_object_id_key]:
+            Acc.append(1.)
+        else:
+            Acc.append(0.)
+        
+    message += "\nAcc: {}".format(sum(Acc)/len(Acc))
+    with open(os.path.join(args.experiment_path, f"{task_name}_{epoch}_qa_scores.json"), "w") as f: 
+        json.dump(message, f)
+                
+    return Acc
+        
+        
 
 def test_net():
     pass

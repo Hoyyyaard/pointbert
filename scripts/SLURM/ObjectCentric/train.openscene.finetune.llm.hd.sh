@@ -57,5 +57,5 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert
     --launcher slurm \
     --sync_bn \
     --config cfgs/MultiScale_models/objectcentric/ObjectCentric-Adaptive-LLM-finetune-Openscene-HD.yaml \
-    --exp_name Exp0108_0726_LeoModel_SeqLen256_WoClipNorm_WSceneLoss_WHdBboxAug_WDiffPrompt_From[Scratch] \
+    --exp_name Exp0122_0801_LeoModel_ObjectCaptionWoVP_SeqLen256_WoClipNorm_WSceneLoss_WHdBboxAug_WDiffPrompt_From[Scratch] \
     --resume

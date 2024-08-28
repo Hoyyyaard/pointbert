@@ -1,0 +1,4 @@
+NAME: NuscenesDataset
+N_POINTS: 10000
+NUM_GROUP: 64
+GROUP_SIZE: 192 

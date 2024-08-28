@@ -34,12 +34,13 @@ sns.kdeplot(hm3dxrqa_areas, label='HM3D-XR-QA', fill=True)
 
 
 # Add labels and title
-plt.xlabel('Area Size (m²)', fontsize=20)
-plt.ylabel('Number of Scenes', fontsize=20)
-plt.title('Comparison of Scene Areas Between ScanQA and HM3D-XRQA', fontsize=20)
-plt.legend(fontsize=20)  # 设置图例字体大小
-plt.xticks(fontsize=20)
+plt.xlabel('Area Size (m²)', fontsize=22)
+plt.ylabel('Number of Scenes', fontsize=22)
+plt.title('Comparison of Scene Areas Between ScanQA and HM3D-XRQA', fontsize=22)
+plt.legend(fontsize=22)  # 设置图例字体大小
+plt.xticks(fontsize=22)
 plt.yticks([])  # 移除 y 轴坐标
 # Show the plot
 plt.tight_layout()
-plt.show()
+# plt.show()
+plt.savefig('data/SceneVerse/meta_data/scanqa_hm3dxrqa_compared_vis.pdf')

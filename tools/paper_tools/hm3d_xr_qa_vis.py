@@ -41,9 +41,9 @@ def down_sample(points, colors, instance_labels=None, featrues=None, npoint=None
 
 
 dataset_name = 'HM3D'
-scan_name = '00591-JptJPosx1Z6'
-instance_room_id = 'sub004'
-region_id = 'sub004-sub008-sub012'
+scan_name = '00245-741Fdj7NLF9'
+instance_room_id = 'sub002'
+region_id = 'sub002-sub005-sub006'
 
 room_center = torch.load(os.path.join('data/SceneVerse/HM3D/scan_data/room_center', '{}.pth'.format(scan_name)))
         
@@ -70,12 +70,12 @@ instance_labels = np.array(instance_labels)
 
 
 # Get HD Info
-N = 240000
+N = 40000
 hd_points, hd_features, hd_colors, hd_instance_labels = down_sample(points, features, colors, instance_labels, npoint=N)
 
 # remove top 10% points and colors
 top10 = np.percentile(hd_points[:,2], 70)
-mask = hd_points[:,2] < top10
+mask = hd_points[:,2] < top10 
 hd_points = hd_points[mask]
 hd_colors = hd_colors[mask]
 

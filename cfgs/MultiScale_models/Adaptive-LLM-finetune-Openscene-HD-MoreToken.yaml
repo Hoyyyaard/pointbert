@@ -28,9 +28,9 @@ model : {
   trans_dim: 768,
 
   use_openscene: True,
-  N_POINTS: 80000,
-  NUM_GROUP: 512,
-  GROUP_SIZE: 192, 
+  N_POINTS: 60000,
+  NUM_GROUP: 256,
+  GROUP_SIZE: 256, 
 
   REGION_N_POINTS: 8192,
   REGION_NUM_GROUP : 8,

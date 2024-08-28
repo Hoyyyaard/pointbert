@@ -18,7 +18,8 @@ dataset : {
             others: {subset: 'train', npoints: 1024, whole: True, shuffle: True, 
             vocab: 'ckpts/Llama-2-7b-hf', 
             differ_prompt: True,
-            USE_OBJECTCENTRIC: True,}},
+            USE_OBJECTCENTRIC: True,
+            OBJECT_CAPTION_WO_VP: True,}},
   val : { _base_: cfgs/dataset_configs/SceneVerseLLMOpensceneFinetuneDatasetHD.yaml, 
             others: {subset: 'val', shuffle: False, vocab: 'ckpts/Llama-2-7b-hf'}}}
 model : {

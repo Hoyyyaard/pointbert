@@ -29,6 +29,7 @@ model : {
   quantization: False, 
 
   USE_OBJECTCENTRIC: True,
+  # USE_OE_ENCODE_DENSE: True,
 
   FLEX: True,
   DENSE_TOKEN_NUM: 4,

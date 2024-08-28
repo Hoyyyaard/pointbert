@@ -180,6 +180,54 @@ TASK_PROMPT = {
             do_localize=True
         ),
     ],
+    'nuscenes_qa': [
+        dict(
+            instruction='### human: based on the outdoor scene, answer the question: "{question}" ### assistant:',
+            answer='{answer}',
+            do_localize=False
+        ),
+        dict(
+            instruction='### human: answer this question based on the provided outdoor scene: "{question}" ### assistant:',
+            answer='{answer}',
+            do_localize=False
+        ),
+        dict(
+            instruction='### human: answer the question: "{question}" using the relevant object locations from the provided outdoor scene. ### assistant:',
+            answer='the answer is: {answer}, and the related objects are localized at {locations}',
+            do_localize=True
+        ),
+        dict(
+            instruction='### human: given the outdoor scene, first locate all the relevant objects, then answer the question: "{question}" ### assistant:',
+            answer='the related objects are localized at {locations}, the answer is: {answer}',
+            do_localize=True
+        ),
+    ],
+    'nuscenes_object_caption': [
+        dict(
+            instruction='### human: given the outdoor scene, describe this object. ### assistant:',
+            answer='{caption}',
+        ),
+        dict(
+            instruction='### human: describe this object in the given outdoor scene. ### assistant:',
+            answer='{caption}',
+        ),
+        dict(
+            instruction='### human: given the 3D scene, localize and describe this object. ### assistant:',
+            answer='the object is localized at {locations}, {caption}',
+        ),
+        dict(
+            instruction='### human: localize and describe this object in the given 3D scene. ### assistant:',
+            answer='the object is localized at {locations}, {caption}',
+        ),
+        dict(
+            instruction='### human: given the 3D scene, describe this object first, then localize it. ### assistant:',
+            answer='{caption}. It is localized at {locations}',
+        ),
+        dict(
+            instruction='### human: describe then localize the object from the 3D scene. ### assistant:',
+            answer='{caption}. It is localized at {locations}',
+        ),
+    ],
     'region_caption':[
         dict(
             instruction='### human: Describe the position of this object in relation to the surrounding objects in the 3D scene. ### assistant:',
@@ -1249,7 +1297,7 @@ class SceneVerseLLMPretrainDataset(Dataset):
             return ret_dict
 
 
-def proc_object_tokens_for_objectcentric(points, instance_labels, sparse_obj_token_label=None):
+def proc_object_tokens_for_objectcentric(points, instance_labels, sparse_obj_token_label=None, tgt_label=None):
         object_tokens = []
         center = []
         room_label_offset = 10000
@@ -1258,10 +1306,8 @@ def proc_object_tokens_for_objectcentric(points, instance_labels, sparse_obj_tok
         obj_token_label = []
         obj_loc = []
         if sparse_obj_token_label is None:
-            for label in np.unique(instance_labels):
-                if label <= 0 or label == room_label_offset or label == room_label_offset*2 or label == room_label_offset*3:
-                    continue
-                mask = instance_labels == label
+            if tgt_label is not None:
+                mask = instance_labels == tgt_label
                 object_points = points[mask]
                 center.append(object_points[:, :3].mean(0))
                 obj_center = object_points[:, :3].mean(0)
@@ -1270,7 +1316,21 @@ def proc_object_tokens_for_objectcentric(points, instance_labels, sparse_obj_tok
                 idx = np.random.choice(len(object_points), obj_pcd_num, replace=True)
                 object_points = object_points[idx]
                 object_tokens.append(object_points)
-                obj_token_label.append(label)
+                obj_token_label.append(tgt_label)
+            else:
+                for label in np.unique(instance_labels):
+                    if label <= 0 or label == room_label_offset or label == room_label_offset*2 or label == room_label_offset*3:
+                        continue
+                    mask = instance_labels == label
+                    object_points = points[mask]
+                    center.append(object_points[:, :3].mean(0))
+                    obj_center = object_points[:, :3].mean(0)
+                    obj_size = object_points[:, :3].max(0) - object_points[:, :3].min(0)
+                    obj_loc.append(np.concatenate([obj_center, obj_size], 0))
+                    idx = np.random.choice(len(object_points), obj_pcd_num, replace=True)
+                    object_points = object_points[idx]
+                    object_tokens.append(object_points)
+                    obj_token_label.append(label)
         # else:
         #     # As dense vision token needs be the same order as the sparse token
         #     for label in sparse_obj_token_label:
@@ -1305,12 +1365,14 @@ def proc_object_tokens_for_objectcentric(points, instance_labels, sparse_obj_tok
             #     object_tokens = np.concatenate([object_tokens, np.zeros((pad_size, num, object_tokens.shape[-1]))], 0)
             center = np.concatenate([center, np.zeros((pad_size, center.shape[-1]))], 0)
             obj_loc = np.concatenate([obj_loc, np.zeros((pad_size, obj_loc.shape[-1]))], 0)
+            obj_token_label.extend([0] * pad_size)
         else:
             object_mask = np.ones(len(object_tokens))
             object_tokens = object_tokens[:_num_groups]
             center = center[:_num_groups]
             object_mask = object_mask[:_num_groups]
             obj_loc = obj_loc[:_num_groups]
+            obj_token_label = obj_token_label[:_num_groups]
 
         return object_tokens, center, object_mask, obj_loc, obj_token_label
  
@@ -1344,6 +1406,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             self.config.differ_prompt = False
         
         self.USE_OBJECTCENTRIC = config.get('USE_OBJECTCENTRIC', False)
+        self.OBJECT_CAPTION_WO_VP = config.get('OBJECT_CAPTION_WO_VP', False)
         self.room_label_offset = 10000
         
         self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
@@ -1753,7 +1816,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
         points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
         pcds = np.concatenate([points, colors/255], -1)
         self.obj_pcd_num = 256 
-        obj_tokens, obj_center, obj_mask, obj_loc, _ = proc_object_tokens_for_objectcentric(pcds, instance_labels)
+        tgt_label = int(anno['target_id']) if self.OBJECT_CAPTION_WO_VP and task_name == 'object_caption' else None 
+        obj_tokens, obj_center, obj_mask, obj_loc, obj_token_label = proc_object_tokens_for_objectcentric(pcds, instance_labels, tgt_label=tgt_label)
         # if not self.wohd:
         #     hd_obj_tokens, hd_obj_center, hd_obj_mask, _ = self.proc_object_tokens_for_objectcentric(hd_points, hd_features, hd_instance_labels, sparse_obj_token_label)
         # else:
@@ -1782,6 +1846,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             ret_dict['obj_center'] = obj_center.astype(np.float32)
             ret_dict['obj_mask'] = obj_mask.astype(np.int64)
             ret_dict['obj_loc'] = obj_loc.astype(np.float32)
+            ret_dict['obj_token_label'] = np.array(obj_token_label).astype(np.int64)
         
         if not self.wohd:
             # if self.USE_OBJECTCENTRIC:
@@ -1791,6 +1856,7 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             # else:
             ret_dict['hd_points'] = hd_points
             ret_dict['hd_features'] = hd_features
+            ret_dict['hd_instance_labels'] = hd_instance_labels.astype(np.int64)
         
         if self.OPENSCENE:
             ret_dict['features'] = features
@@ -1836,8 +1902,8 @@ class SceneVerseLLMFinetuneDataset(Dataset):
             # Add special token 
             intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
             prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
-            answers = anno['answers'][0]
-            answers = prompt['answer'].format(locations=boxes, answer=anno['answers'][0])
+            answers = random.choice(anno['answers'])
+            answers = prompt['answer'].format(locations=boxes, answer=answers)
             llm_inputs = self.tokenizer.batch_encode_plus(
                 [' '.join((intruction, answers, self.tokenizer.eos_token))],
                 **self.tokenizer_config
@@ -2239,7 +2305,7 @@ class HD_Hm3dQADataset(Dataset):
         points, colors, instance_labels, features = down_sample(points, colors, instance_labels, features, npoint=self._npoint)
         self.obj_pcd_num = 256 
         pcds = np.concatenate([points, colors/255], -1)
-        obj_tokens, obj_center, obj_mask, obj_loc, _ = proc_object_tokens_for_objectcentric(pcds, instance_labels)
+        obj_tokens, obj_center, obj_mask, obj_loc, obj_token_label = proc_object_tokens_for_objectcentric(pcds, instance_labels)
 
         click_query = np.zeros((1, 3))
         click_mask = np.zeros((1,))
@@ -2262,7 +2328,7 @@ class HD_Hm3dQADataset(Dataset):
             'click_mask': click_mask.astype(np.float32),
             'box_mask': box_mask.astype(np.float32),
             'box_query': box_query.astype(np.float32),
-            
+            'hd_instance_labels': hd_instance_labels.astype(np.int64)
         }
         
         if self.USE_OBJECTCENTRIC:
@@ -2270,10 +2336,10 @@ class HD_Hm3dQADataset(Dataset):
             ret_dict['obj_center'] = obj_center.astype(np.float32)
             ret_dict['obj_mask'] = obj_mask.astype(np.int64)
             ret_dict['obj_loc'] = obj_loc.astype(np.float32)
+            ret_dict['obj_token_label'] = np.array(obj_token_label).astype(np.int64)
         
         if hasattr(self.config, 'vis'):
             ret_dict['hd_colors'] = hd_colors.astype(np.float32)
-            ret_dict['hd_instance_labels'] = hd_instance_labels.astype(np.int64)
             ret_dict['tgt_id'] = tgt_id
         
         question = anno['question']
@@ -2303,3 +2369,224 @@ class HD_Hm3dQADataset(Dataset):
         ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
         # ret_dict['start_learnable_id'] = np.array(np.where(ret_dict['gradient_mask']==1)[0][0]).astype(np.int64)
         return ret_dict
+    
+
+@DATASETS.register_module()
+class NuscenesDataset(Dataset):
+    
+    def gen_caption(self, reference_all_data):
+        reference = reference_all_data['attribute_caption']['attribute_caption'] + \
+                                " " + reference_all_data['localization_caption']['localization_caption'] + \
+                                " is " + reference_all_data['motion_caption']['motion_caption'] + \
+                                " " + reference_all_data['map_caption']['map_caption']
+        return reference
+    
+    def __init__(self, config):
+        self.tokenizer = AutoTokenizer.from_pretrained('ckpts/Llama-2-7b-hf', add_bos_token=False)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = 'right'
+        self.config = config
+        
+        self.all_episodes = []
+        
+        self.SCENE_TOKEN = '<scene><scene_placehold></scene>'
+        self.VP_TOKEN = '<vp_placehold>'
+        special_tokens = ['<vp_placehold>', '<scene>', '<scene_placehold>', '</scene>', '<obj>', '</obj>']
+        # xyz_prompt = '<loc{}>'
+        # for i in range(255):
+        #     special_tokens.append(xyz_prompt.format(i))
+        # whl_prompt = '<whl{}>'
+        # for i in range(255):
+        #     special_tokens.append(whl_prompt.format(i))
+        self.tokenizer.add_special_tokens({'additional_special_tokens':special_tokens})
+        self._openscene_root = 'data/SceneVerse/OpenScene_Nuscenes_Features'
+        all_fts_file = {item:[] for item in os.listdir(f"{self._openscene_root}/Nuscenes_Openscene")}
+        # bad_token_list = ['3337be594faf4cfe895b9209bf54c91c', 'eb3a44c220cc4e9eb06bd69727da22de']
+        
+        if config.subset == 'train':
+            if hasattr(self.config,"ALL_DATA"):
+                num = 10000000
+            else:
+                num = 100000 if not hasattr(self.config, "QA_NUM") else self.config.QA_NUM 
+        else:
+            if hasattr(self.config,"ALL_DATA"):
+                num = 10000000
+            else:
+                num = 4000 
+        
+        valid_sample_tokens = []
+        qa_source_dir_f = 'data/NuscenesQA/questions/NuScenes_{}_questions.json'.format(config.subset)
+        with open(qa_source_dir_f, 'r') as f:
+            datas = json.load(f)['questions'][:num]
+        self.all_qa = []
+        for episodes in tqdm(datas):
+            if '{}.pth'.format(episodes["sample_token"]) in all_fts_file.keys() or \
+               '{}.npz'.format(episodes["sample_token"]) in all_fts_file.keys() :
+                valid_sample_tokens.append(episodes["sample_token"])
+                episodes['episode_id'] = '{}#{}#{}'.format(episodes["sample_token"], episodes["question"], episodes["answer"])
+                episodes['anno'] = {'answers': [episodes['answer']]}
+                episodes['task_name'] = 'nuscenes_qa'
+                self.all_qa.append(episodes)
+        valid_sample_tokens = set(valid_sample_tokens)
+        self.all_episodes.extend(self.all_qa)
+        if self.config.subset == 'val' and hasattr(os.environ, 'CHUNK'):
+            CHUNK = int(os.environ['CHUNK'])
+            self.all_episodes = self.all_episodes[int(len(self.all_episodes)//2)*CHUNK: int(len(self.all_episodes)//2)*(CHUNK+1)]
+        print_log(f'[DATASET] {len(self.all_qa)} qa were loaded from NuscenesQA data', logger = 'NuscenesDataset')
+        
+        # Nuscenes Caption from TOD3Cap
+        if hasattr(self.config, "USE_CAPTION_DATA") and self.config.subset == 'train':
+            if not hasattr(self.config, "CAPTION_NUM"):
+                filter_info = json.load(open('data/NuscenesCaption/filter_400k.json', 'r'))
+            else:
+                filter_info = json.load(open('data/NuscenesCaption/filter_400k.json', 'r'))[:self.config.CAPTION_NUM]
+            instance_info  = json.load(open("data/NuscenesCaption/instance.json", "r"))
+            instance_info = {ins['token']: ins['category_token'] for ins in instance_info}
+            category_info  = json.load(open("data/NuscenesCaption/category.json", "r"))
+            category_info = {cat['token']: cat['index'] for cat in category_info}
+            
+            captions = json.load(open("data/NuscenesCaption/final_caption_bbox_token.json", "r"))
+            self.caption = []
+            for _, cap in tqdm(captions.items()):
+                if cap['sample_token'] in filter_info.keys():
+                    if cap['sample_token'] in valid_sample_tokens and \
+                        category_info[instance_info[cap['instance_token']]] in filter_info[cap['sample_token']]:
+                        gt = self.gen_caption(cap)
+                        self.caption.append(
+                            {
+                                'episode_id': '{}#{}'.format(cap["sample_token"], gt),
+                                'answers': [gt],
+                                'target_id': category_info[instance_info[cap['instance_token']]],
+                                'anno': {'answers': [gt]},
+                                'task_name': 'nuscenes_object_caption',
+                                'sample_token': cap["sample_token"]
+                            }  
+                        )
+            self.all_episodes.extend(self.caption)
+            print_log(f'[DATASET] {len(self.caption)} caption were loaded from TOD3Cap data', logger = 'NuscenesDataset')
+
+        self.corpus = {
+            'nuscenes_qa': copy.deepcopy(self.all_qa),
+        }
+
+        self.tokenizer_config = dict(
+            max_length=256, 
+            padding='max_length', 
+            truncation='longest_first', 
+            return_tensors='np'
+        )
+        
+    def __len__(self):
+        return len(self.all_episodes)
+    
+    def __getitem__(self, index):
+        
+        data = self.all_episodes[index]
+        task_name = data['task_name']
+        
+        if os.path.exists(os.path.join("data/SceneVerse/OpenScene_Nuscenes_Features/Nuscenes_Openscene", "{}.pth".format(data['sample_token']))):
+            scene_dict = torch.load(os.path.join("data/SceneVerse/OpenScene_Nuscenes_Features/Nuscenes_Openscene", "{}.pth".format(data['sample_token'])), map_location='cpu')
+            raw_points = scene_dict['points'].numpy().astype(np.float32)
+            raw_colors = scene_dict['colors'].numpy()
+            raw_features = scene_dict['features'].numpy().astype(np.float32)
+            raw_instance_labels = scene_dict['instance_labels'].numpy()
+        else:
+            scene_dict = np.load(os.path.join("data/SceneVerse/OpenScene_Nuscenes_Features/Nuscenes_Openscene", "{}.npz".format(data['sample_token'])))
+            raw_points = scene_dict['points'].astype(np.float32)
+            raw_colors = np.zeros_like(raw_points)
+            raw_features = scene_dict['features'].astype(np.float32)
+            raw_instance_labels = scene_dict['instance_labels']
+        raw_points = pc_norm(raw_points)
+        
+        hd_points, hd_features, hd_colors, hd_instance_labels = down_sample(raw_points, raw_features, raw_colors, raw_instance_labels, npoint=40000)
+        points, colors, instance_labels, features = down_sample(raw_points, raw_colors, raw_instance_labels, raw_features, npoint=self.config.N_POINTS)
+        
+        click_query = np.zeros((1, 3))
+        click_mask = np.zeros((1,))
+        box_mask = np.zeros((1,))
+        box_query = np.zeros((features.shape[-1],))
+        ret_dict = {
+            'num_groups': self.config.NUM_GROUP,
+            'group_size': self.config.GROUP_SIZE,
+            'level': 'scene',
+            'episode_id': data['episode_id'],
+            'hd_points': hd_points.astype(np.float32),
+            'hd_features': hd_features.astype(np.float32),
+            'points': points.astype(np.float32),
+            'colors': colors.astype(np.float32),
+            'features': features.astype(np.float32),
+            'click_query': click_query.astype(np.float32),
+            'click_mask': click_mask.astype(np.float32),
+            'box_mask': box_mask.astype(np.float32),
+            'box_query': box_query.astype(np.float32),
+            'hd_instance_labels': hd_instance_labels.astype(np.int64),
+            'task_name': task_name
+        }
+        
+        if task_name == 'nuscenes_qa':
+        
+            question = data['question']
+            prompt = deepcopy(TASK_PROMPT[task_name][0]) 
+            boxes = ''
+            intruction = prompt['instruction'].format(locations=boxes, question=question)
+
+            # Add special token 
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            answers = data['answer']
+            answers = prompt['answer'].format(locations=boxes, answer=answers)
+            llm_inputs = self.tokenizer.batch_encode_plus(
+                [' '.join((intruction, answers, self.tokenizer.eos_token))],
+                **self.tokenizer_config
+            )
+            
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+            return ret_dict
+        
+        elif task_name == 'nuscenes_object_caption':
+            instance_id = int(data['target_id'])
+
+            if random.random() < 0.5 or self.config.subset == 'val':
+                click_query[0] = random.choice(raw_points[raw_instance_labels == instance_id])
+                click_mask[0] = 1
+            else:
+                box_mask[0] = 1
+                box_query = raw_features[raw_instance_labels==instance_id].mean(0)
+            ret_dict.update({
+                'click_query': click_query.astype(np.float32),
+                'click_mask': click_mask.astype(np.float32),
+                'box_mask': box_mask.astype(np.float32),
+                'box_query': box_query.astype(np.float32),
+            })
+            
+            object_points = raw_points[raw_instance_labels==instance_id] 
+            boxes = convert_objectpoints_to_bbox_str(raw_points, object_points)
+
+            if self.config.subset == 'train':
+                prompt = deepcopy(random.choice(TASK_PROMPT[task_name]))
+            else:
+                prompt = deepcopy(TASK_PROMPT[task_name][0])
+    
+            intruction = prompt['instruction']
+
+            intruction = '{} {} {} {}'.format(SYSTEM_PROMPT, self.SCENE_TOKEN, self.VP_TOKEN, intruction)
+            prompt_inputs = self.tokenizer.batch_encode_plus([intruction], **self.tokenizer_config)
+            caption = data['answers'][0]
+            answers = prompt['answer'].format(locations=boxes, caption=caption)
+            llm_inputs = self.tokenizer.batch_encode_plus(
+            [' '.join((intruction, answers, self.tokenizer.eos_token))],
+            **self.tokenizer_config
+            )
+            
+            ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
+            ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
+            ret_dict['gradient_mask'] = \
+                (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
+            return ret_dict

@@ -1,5 +1,5 @@
-NUM_GPUS_PER_NODE=${2:-5}
-NUM_NODES=${3:-16}
+NUM_GPUS_PER_NODE=${2:-6}
+NUM_NODES=${3:-15}
 JOB_ID=${4:-"allm"}
 LOOP_COUNTER=0
 SCRIPT=${1:-"/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/scripts/SLURM/ObjectCentric/train.openscene.finetune.llm.flex.hd1.sh"}

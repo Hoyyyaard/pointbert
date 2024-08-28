@@ -16,7 +16,6 @@ map = {
 
 small_bbox_epi_ids = json.load(open(map[args.dataset]))
 pred_gt = json.load(open(args.pred_gt_json))
-
 small_scores = {
     "bleu-1": [],
     "bleu-2": [],
@@ -50,6 +49,9 @@ all_scores = {
 for k,epi in pred_gt.items():
     for key in all_scores.keys():
         all_scores[key].append(epi['score'][key])
+    # kk = k.split('-')
+    # k = '-'.join(kk[:-1])
+    # k = 'ScanNet#{}_00#{}'.format(kk[1], kk[-1])
     if k in small_bbox_epi_ids:
         for key in small_scores.keys():
             small_scores[key].append(epi['score'][key])

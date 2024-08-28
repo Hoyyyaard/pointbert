@@ -5,8 +5,8 @@ import logging
 import argparse
 import urllib
 import sys
-sys.path.append('/home/admin/Projects/Point-BERT/models/openscene')
-# sys.path.append('/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/models/openscene')
+# sys.path.append('/home/admin/Projects/Point-BERT/models/openscene')
+sys.path.append('/gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/pointbert/models/openscene')
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.parallel

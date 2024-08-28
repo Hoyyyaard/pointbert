@@ -16,6 +16,7 @@ from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
     wrap,
 )
+import random
 import einops
 from models.dvae import knn_point, square_distance, Group
 from utils import misc
@@ -64,7 +65,10 @@ class LeoObjectEncoder(nn.Module):
         
         self.hidden_dim = 256
         self.obj_proj = nn.Linear(self.obj_encoder.out_dim, self.hidden_dim)
-        self.hd_obj_proj = nn.Linear(encoder_config.trans_dim, self.hidden_dim)
+        if hasattr(encoder_config, 'USE_OE_ENCODE_DENSE'):
+            self.hd_obj_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
+        else:
+            self.hd_obj_proj = nn.Linear(encoder_config.trans_dim, self.hidden_dim)
 
         spatial_encoder_layer = TransformerSpatialEncoderLayer(
                 d_model=self.hidden_dim,
@@ -95,6 +99,17 @@ class LeoObjectEncoder(nn.Module):
         # only initialize spatial encoder and loc layers
         self.spatial_encoder.apply(self._init_weights_bert)
         self.loc_layers.apply(self._init_weights_bert)
+    
+    def forward_dense(self, pts):
+        pts = pts.contiguous()
+        bsz = pts.shape[0]
+        points_per_object = pts.shape[-2]
+        pts = pts.view(-1, points_per_object, 3)
+        obj_feats = self.obj_encoder(pts)
+        obj_feats = self.obj_proj(obj_feats)
+        obj_feats = obj_feats.view(bsz, -1, obj_feats.shape[-1])
+        
+        return obj_feats
     
     def forward(self, data_dict):
         pts = data_dict['obj_tokens'][:, :, :, :3].contiguous()
@@ -371,6 +386,8 @@ class AdaptiveLLM(nn.Module):
         self.USE_OBJECTCENTRIC = hasattr(self._encoder_config, 'USE_OBJECTCENTRIC')
         self._llm_config.USE_OBJECTCENTRIC = self.USE_OBJECTCENTRIC
         print_log("USE_OBJECTCENTRIC: {}".format(self.USE_OBJECTCENTRIC), self.logger)
+        self.USE_OE_ENCODE_DENSE = hasattr(self._encoder_config, 'USE_OE_ENCODE_DENSE')
+        print_log("USE_OE_ENCODE_DENSE: {}".format(self.USE_OE_ENCODE_DENSE), self.logger)
 
         self._llm_config.DENSE_TOKEN_NUM = self._encoder_config.DENSE_TOKEN_NUM if hasattr(self._encoder_config, 'DENSE_TOKEN_NUM') else None
         if hasattr(self._encoder_config, 'DENSE_TOKEN_SELECT_THRESHOLD'):
@@ -528,6 +545,25 @@ class AdaptiveLLM(nn.Module):
         points = pointnet2_utils.gather_operation(points.transpose(1, 2).contiguous(), fps_idx).transpose(1,2).contiguous()
         return points
     
+    def torch_random_choice(self, x, num_samples, replace=True):
+        """
+        从张量x中随机选择num_samples个元素
+        :param x: 输入张量
+        :param num_samples: 需要选择的元素数量
+        :param replace: 是否允许重复选择元素
+        :return: 随机选择的元素
+        """
+        if replace:
+            # 允许重复选择
+            random_indices = torch.randint(0, len(x), (num_samples,))
+        else:
+        # 不允许重复选择
+            if num_samples > len(x):
+                raise ValueError("num_samples不能超过输入张量的长度")
+            random_indices = torch.randperm(len(x))[:num_samples]
+        
+        return x[random_indices]
+    
     def _get_hd_corpus(self, data_dict, center, neighborhood_xyz):
         '''
             neighborhood_xyz: [bs, 128, 384, 3]
@@ -541,18 +577,62 @@ class AdaptiveLLM(nn.Module):
         group_tokenizer = CenterGroup(num_group=center.shape[1], group_size=DENSE_GROUP_SIZE)
         dense_points = data_dict['hd_points']
         dense_features = data_dict['hd_features']
-        dense_scene_pointclouds = torch.cat([dense_points, dense_features], dim=-1).contiguous()
-        dense_neighborhood = group_tokenizer(dense_scene_pointclouds, center) 
-        # # [bsz, 128, DENSE_GROUP_SIZE, 3]
-        # dense_neighborhood_xyz = dense_neighborhood[... , :3]
-        # # [bsz, 128, DENSE_GROUP_SIZE, 768]
-        # dense_neighborhood_fts = dense_neighborhood[... , 3:]
-        tokenizer = Group(num_group=TOKEN_NUM, group_size=int(DENSE_GROUP_SIZE/TOKEN_NUM))
-        dense_token_neighborhood, dense_token_center = tokenizer(dense_neighborhood.view(-1, dense_neighborhood.shape[-2], dense_neighborhood.shape[-1]).contiguous(), normalize=NORM)
-        dense_token_neighborhood = dense_token_neighborhood.view(bs, -1, dense_token_neighborhood.shape[-2], dense_token_neighborhood.shape[-1]).contiguous()
-        dense_token_center = dense_token_center.view(bs, -1, dense_token_center.shape[-1]).contiguous()
-        # [bs, 128*TOKEN_NUM, 768]
-        dense_fts = dense_token_neighborhood[... , 3:].mean(-2)
+        if self.USE_OBJECTCENTRIC:
+            dense_label = data_dict['hd_instance_labels'].unsqueeze(-1)
+            # [bsz, 128]
+            obj_token_label = data_dict['obj_token_label'].view(-1)
+            dense_scene_pointclouds = torch.cat([dense_points, dense_features, dense_label], dim=-1).contiguous()
+            dense_neighborhood = group_tokenizer(dense_scene_pointclouds, center)
+            # [bsz, 128, DENSE_GROUP_SIZE, 1]
+            dense_neighborhood_labels = dense_neighborhood[... , -1:].squeeze(-1).long()
+            object_pcd_num = 256
+            # [bsz* 128, DENSE_GROUP_SIZE, N]
+            dense_xyzs = dense_neighborhood[... , :3].view(-1, DENSE_GROUP_SIZE, 3)
+            dense_fts = dense_neighborhood[... , 3:-1].view(-1, DENSE_GROUP_SIZE, 768)
+            dense_neighborhood_labels = dense_neighborhood_labels.view(-1, dense_neighborhood_labels.shape[-1])
+            dense_object_pcds = []
+            dense_object_fts = []
+            for dnl, dxyz, dfts, ojt in zip(dense_neighborhood_labels, dense_xyzs, dense_fts, obj_token_label):
+                # Target object
+                # tgt_mask = dnl == ojt
+                # if tgt_mask.sum() > 0:
+                #     dense_object_pcds.append(self.torch_random_choice(dxyz[tgt_mask], object_pcd_num))
+                #     dense_object_fts.append(dfts[tgt_mask].mean(0))
+                # Other objects
+                # ul = torch.unique(dnl)
+                ## Remove ignored objects
+                # ul = ul[(ul != ojt) * (ul != 0) * (ul != self.encoder.room_label_offset) * (ul != self.encoder.room_label_offset*2) * (ul != self.encoder.room_label_offset*3)]
+                # offset = int(tgt_mask.sum() > 0)
+                # random_elements = self.torch_random_choice(ul, TOKEN_NUM-offset)
+                random_elements = self.torch_random_choice(ul, TOKEN_NUM)
+                for label in random_elements:
+                    dense_object_pcds.append(self.torch_random_choice(dxyz[dnl == label], object_pcd_num))
+                    dense_object_fts.append(dfts[dnl == label].mean(0))
+            #[bsz* 128, TOKEN_NUM, 256, 3]
+            dense_object_pcds = torch.stack(dense_object_pcds)
+            dense_object_fts = torch.stack(dense_object_fts)
+            
+            if self.USE_OE_ENCODE_DENSE:
+                dense_xyzs = dense_object_pcds
+                dense_fts = self.encoder.forward_dense(dense_xyzs)
+            else:
+                dense_fts = dense_object_fts
+                
+            dense_token_center = None
+            
+        else:
+            dense_scene_pointclouds = torch.cat([dense_points, dense_features], dim=-1).contiguous()
+            dense_neighborhood = group_tokenizer(dense_scene_pointclouds, center) 
+            # # [bsz, 128, DENSE_GROUP_SIZE, 3]
+            # dense_neighborhood_xyz = dense_neighborhood[... , :3]
+            # # [bsz, 128, DENSE_GROUP_SIZE, 768]
+            # dense_neighborhood_fts = dense_neighborhood[... , 3:]
+            tokenizer = Group(num_group=TOKEN_NUM, group_size=int(DENSE_GROUP_SIZE/TOKEN_NUM))
+            dense_token_neighborhood, dense_token_center = tokenizer(dense_neighborhood.view(-1, dense_neighborhood.shape[-2], dense_neighborhood.shape[-1]).contiguous(), normalize=NORM)
+            dense_token_neighborhood = dense_token_neighborhood.view(bs, -1, dense_token_neighborhood.shape[-2], dense_token_neighborhood.shape[-1]).contiguous()
+            dense_token_center = dense_token_center.view(bs, -1, dense_token_center.shape[-1]).contiguous()
+            # [bs, 128*TOKEN_NUM, 768]
+            dense_fts = dense_token_neighborhood[... , 3:].mean(-2)
 
         point_cloud_dims_min, _ = dense_points[..., :3].min(dim=1)
         point_cloud_dims_max, _ = dense_points[..., :3].max(dim=1)
@@ -565,7 +645,7 @@ class AdaptiveLLM(nn.Module):
             # 'dense_points':dense_points, 
             'dense_center':dense_token_center,
             'point_cloud_dims': point_cloud_dims,
-            'dense_features':dense_fts.view(bs, -1, TOKEN_NUM, self._encoder_config.trans_dim).contiguous()
+            'dense_features':dense_fts.view(bs, -1, TOKEN_NUM, dense_fts.shape[-1]).contiguous()
         }
         
     def wrap_model(self):
@@ -870,12 +950,12 @@ class AdaptiveLLM(nn.Module):
                     visual_prompt_embeds=prompt_feature[batch_id].unsqueeze(0).to(self.dtype),
                     visual_prompt_mask=prompt_mask[batch_id].unsqueeze(0).to(self.dtype),
                     tokenizer = self.tokenizer,
-                    max_length=20,   
+                    max_length=10 if data_dict['task_name'][batch_id].find('nuscene') != -1 else 20,     ### !!!Carefully Check Here
                     **caption_config,
                 )
                 output_ids.append(output['output_ids'])
                 if caption_config['num_beams'] is None:
-                    if not output['attentions'] is None:
+                    if not output['attentions'] is None and len(vision_embed) == 1:
                         attn = torch.cat(output['attentions'], dim=0)
                         attentions.append(attn)
             
